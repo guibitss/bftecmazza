@@ -1,0 +1,188 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Monochrome tokens — referenciados via bg-ink-50…900 etc. */
+  --color-ink-0:    oklch(1.00 0 0);
+  --color-ink-50:   oklch(0.985 0 0);
+  --color-ink-100:  oklch(0.96 0 0);
+  --color-ink-200:  oklch(0.92 0 0);
+  --color-ink-300:  oklch(0.82 0 0);
+  --color-ink-400:  oklch(0.65 0 0);
+  --color-ink-500:  oklch(0.50 0 0);
+  --color-ink-600:  oklch(0.35 0 0);
+  --color-ink-700:  oklch(0.22 0 0);
+  --color-ink-800:  oklch(0.14 0 0);
+  --color-ink-900:  oklch(0.08 0 0);
+  --color-ink-950:  oklch(0.04 0 0);
+
+  /* Semantic surfaces / fg via vars dinâmicas (light/dark) */
+  --color-surface:        var(--surface);
+  --color-surface-2:      var(--surface-2);
+  --color-surface-muted:  var(--surface-muted);
+  --color-border:         var(--border);
+  --color-border-strong:  var(--border-strong);
+  --color-fg:             var(--fg);
+  --color-fg-muted:       var(--fg-muted);
+  --color-fg-subtle:      var(--fg-subtle);
+
+  --animate-fade-in:   fade-in 0.6s ease-out both;
+  --animate-slide-up:  slide-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-shimmer:   shimmer 2.4s ease-in-out infinite;
+  --animate-shine:     shine 2.8s cubic-bezier(0.4, 0, 0.2, 1) both;
+  --animate-drift-a:   drift-a 18s ease-in-out infinite;
+  --animate-drift-b:   drift-b 22s ease-in-out infinite;
+  --animate-drift-c:   drift-c 26s ease-in-out infinite;
+}
+
+/* ───────── Light (default — Apple Store branca) ───────── */
+:root {
+  color-scheme: light dark;
+
+  --surface:        oklch(1.00 0 0);
+  --surface-2:      oklch(0.985 0 0);
+  --surface-muted:  oklch(0.96 0 0);
+  --border:         oklch(0 0 0 / 0.08);
+  --border-strong:  oklch(0 0 0 / 0.14);
+  --fg:             oklch(0.10 0 0);
+  --fg-muted:       oklch(0.42 0 0);
+  --fg-subtle:      oklch(0.58 0 0);
+
+  --glass-bg:       oklch(1 0 0 / 0.65);
+  --glass-edge:     oklch(1 0 0 / 0.6);
+  --blob-1:         oklch(0 0 0 / 0.08);
+  --blob-2:         oklch(0 0 0 / 0.05);
+  --blob-3:         oklch(0 0 0 / 0.04);
+  --grid-line:      oklch(0 0 0 / 0.035);
+  --noise-opacity:  0.025;
+}
+
+/* ───────── Variant dark baseado em classe ───────── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ───────── Dark (preto profundo Apple) — ativado pela classe .dark no <html> ───────── */
+:root.dark {
+  color-scheme: dark;
+  --surface:        oklch(0.07 0 0);
+  --surface-2:      oklch(0.10 0 0);
+  --surface-muted:  oklch(0.14 0 0);
+  --border:         oklch(1 0 0 / 0.08);
+  --border-strong:  oklch(1 0 0 / 0.16);
+  --fg:             oklch(0.98 0 0);
+  --fg-muted:       oklch(0.68 0 0);
+  --fg-subtle:      oklch(0.52 0 0);
+
+  --glass-bg:       oklch(0.10 0 0 / 0.55);
+  --glass-edge:     oklch(1 0 0 / 0.10);
+  --blob-1:         oklch(1 0 0 / 0.05);
+  --blob-2:         oklch(1 0 0 / 0.03);
+  --blob-3:         oklch(1 0 0 / 0.025);
+  --grid-line:      oklch(1 0 0 / 0.04);
+  --noise-opacity:  0.06;
+}
+
+@layer base {
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--surface);
+    color: var(--fg);
+    font-feature-settings: "ss01", "cv11", "ss03", "cv01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.01em;
+  }
+  ::selection {
+    background: var(--fg);
+    color: var(--surface);
+  }
+  /* hairline borders apple-style */
+  hr { border-color: var(--border); }
+}
+
+/* ───────── Keyframes ───────── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes shine {
+  0%   { transform: translateX(-150%) skewX(-20deg); opacity: 0; }
+  35%  { opacity: 1; }
+  100% { transform: translateX(150%) skewX(-20deg); opacity: 0; }
+}
+@keyframes drift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(40px, -30px) scale(1.05); }
+}
+@keyframes drift-b {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(-50px, 40px) scale(1.08); }
+}
+@keyframes drift-c {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(30px, 50px) scale(0.96); }
+}
+
+/* ───────── Glass surface (vitrificado) ───────── */
+@utility glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid var(--border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    0 1px 2px oklch(0 0 0 / 0.04),
+    0 24px 60px -16px oklch(0 0 0 / 0.18);
+}
+@utility glass-strong {
+  background: var(--glass-bg);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--border-strong);
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    0 2px 4px oklch(0 0 0 / 0.06),
+    0 40px 80px -20px oklch(0 0 0 / 0.24);
+}
+
+/* ───────── Hairline (Apple's signature 1px border) ───────── */
+@utility hairline {
+  border: 1px solid var(--border);
+}
+@utility hairline-b {
+  border-bottom: 1px solid var(--border);
+}
+@utility hairline-l {
+  border-left: 1px solid var(--border);
+}
+@utility hairline-t {
+  border-top: 1px solid var(--border);
+}
+@utility hairline-r {
+  border-right: 1px solid var(--border);
+}
+
+/* ───────── Number rendering ───────── */
+@utility num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "ss01";
+}
+
+/* ───────── Subtle grid pattern utility ───────── */
+@utility ambient-grid {
+  background-image:
+    linear-gradient(to right,  var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
