@@ -1,0 +1,7 @@
+{
+  "buildCommand": "cd crm && npm run build",
+  "outputDirectory": "crm/.next",
+  "installCommand": "cd crm && npm install",
+  "framework": "nextjs",
+  "devCommand": "cd crm && npm run dev"
+}
