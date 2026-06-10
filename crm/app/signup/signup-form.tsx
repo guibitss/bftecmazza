@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { createPendingProfile } from './actions';
 
 export default function SignupForm() {
   const router = useRouter();
@@ -31,18 +32,15 @@ export default function SignupForm() {
       setError(signErr.message); setLoading(false); return;
     }
 
-    // cria o perfil em app_users com status=pending (RLS permite SELF insert)
+    // cria o perfil em app_users via server action (admin client bypassa RLS)
     if (data.user) {
-      const { error: pErr } = await supabase.from('app_users').insert({
-        id: data.user.id,
-        email: email.trim().toLowerCase(),
-        name: name.trim(),
-        is_admin: false,
-        active: true,
-        // status default = 'pending'
-      });
-      if (pErr && !pErr.message.includes('duplicate')) {
-        setError(`Perfil: ${pErr.message}`); setLoading(false); return;
+      const res = await createPendingProfile(
+        data.user.id,
+        email.trim().toLowerCase(),
+        name.trim(),
+      );
+      if (!res.ok) {
+        setError(`Perfil: ${res.error}`); setLoading(false); return;
       }
     }
 
