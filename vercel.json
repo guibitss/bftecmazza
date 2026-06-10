@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "crm/package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "crm/$1"
+    }
+  ]
+}
