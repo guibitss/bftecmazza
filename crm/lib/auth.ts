@@ -34,29 +34,40 @@ export async function getCurrentUser(): Promise<CurrentUser> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: profile } = await supabase
-    .from('app_users')
-    .select('id, email, name, is_admin, active, status, manager_of_store_id')
-    .eq('id', user.id)
-    .maybeSingle();
+  // Dispara profile + ambas as queries de inbox em paralelo para minimizar latência
+  const [{ data: profile }, { data: adminInboxData }, { data: userInboxData }] =
+    await Promise.all([
+      supabase
+        .from('app_users')
+        .select('id, email, name, is_admin, active, status, manager_of_store_id')
+        .eq('id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('inboxes')
+        .select('id, store_id, kind, waha_session, display_name, vendor_id, stores:store_id(slug)')
+        .eq('active', true)
+        .order('store_id')
+        .order('kind'),
+      supabase
+        .from('user_inboxes')
+        .select(`
+          can_send, can_manage,
+          inboxes:inbox_id (
+            id, store_id, kind, waha_session, display_name, vendor_id,
+            stores:store_id(slug)
+          )
+        `)
+        .eq('user_id', user.id),
+    ]);
 
   if (!profile || !profile.active) redirect('/login');
   if (profile.status !== 'approved') redirect('/aguardando-aprovacao');
 
   let inboxes: InboxAccess[] = [];
-
-  // vendor_ids das inboxes que o user opera (com can_send)
   let vendorIds: number[] = [];
 
   if (profile.is_admin) {
-    const { data } = await supabase
-      .from('inboxes')
-      .select('id, store_id, kind, waha_session, display_name, vendor_id, stores:store_id(slug)')
-      .eq('active', true)
-      .order('store_id')
-      .order('kind');
-
-    inboxes = (data ?? []).map(r => {
+    inboxes = (adminInboxData ?? []).map(r => {
       const storeRel = r.stores as { slug?: string } | { slug: string }[] | null;
       const slug = Array.isArray(storeRel) ? storeRel[0]?.slug ?? '' : storeRel?.slug ?? '';
       return {
@@ -71,16 +82,7 @@ export async function getCurrentUser(): Promise<CurrentUser> {
       };
     });
   } else {
-    const { data } = await supabase
-      .from('user_inboxes')
-      .select(`
-        can_send, can_manage,
-        inboxes:inbox_id (
-          id, store_id, kind, waha_session, display_name, vendor_id,
-          stores:store_id(slug)
-        )
-      `)
-      .eq('user_id', user.id);
+    const data = userInboxData;
 
     inboxes = (data ?? []).flatMap((r) => {
       const ibRel = r.inboxes as unknown;
