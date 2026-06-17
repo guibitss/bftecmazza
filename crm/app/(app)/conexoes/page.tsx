@@ -1,22 +1,7 @@
-import { redirect } from 'next/navigation';
 import { Wifi } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { SessionCard, type SessionDef } from './session-card';
-
-interface StoreRow {
-  id: number;
-  slug: string;
-  waha_url: string;
-  bot_session: string | null;
-  support_session: string | null;
-}
-
-interface VendorRow {
-  store_id: number;
-  name: string;
-  waha_session: string | null;
-}
 
 function displaySlug(slug: string) {
   const map: Record<string, string> = {
@@ -27,78 +12,90 @@ function displaySlug(slug: string) {
   return map[slug] ?? slug;
 }
 
-function vendorLabel(name: string) {
-  // Capitaliza cada palavra
-  return name.replace(/\b\w/g, c => c.toUpperCase());
-}
-
 export default async function ConexoesPage() {
   const user = await getCurrentUser();
-  if (!user.isAdmin) redirect('/');
-
   const admin = createAdminClient();
 
-  const [{ data: stores }, { data: vendors }] = await Promise.all([
-    admin
-      .from('stores')
-      .select('id, slug, waha_url, bot_session, support_session')
-      .eq('active', true)
-      .order('id'),
-    admin
+  // Busca todas as lojas ativas para pegar waha_url
+  const { data: stores } = await admin
+    .from('stores')
+    .select('id, slug, waha_url, bot_session, support_session')
+    .eq('active', true)
+    .order('id');
+
+  const storeMap = new Map((stores ?? []).map(s => [s.id, s]));
+
+  let storeGroups: { storeId: number; storeSlug: string; sessions: SessionDef[] }[] = [];
+
+  if (user.isAdmin) {
+    // Admin vê todas as sessões de todas as lojas
+    const { data: vendors } = await admin
       .from('vendors')
       .select('store_id, name, waha_session')
-      .eq('active', true),
-  ]);
+      .eq('active', true);
 
-  const storeList = (stores ?? []) as StoreRow[];
-  const vendorList = (vendors ?? []) as VendorRow[];
+    const vendorList = vendors ?? [];
 
-  // Monta lista de sessões por loja
-  const storeGroups: { store: StoreRow; sessions: SessionDef[] }[] = storeList.map(store => {
-    const sessions: SessionDef[] = [];
+    storeGroups = (stores ?? []).map(store => {
+      const sessions: SessionDef[] = [];
 
-    if (store.bot_session) {
-      sessions.push({
-        session: store.bot_session,
-        label: 'Secretária IA',
-        role: 'bot',
-        wahaUrl: store.waha_url,
-      });
-    }
+      if (store.bot_session) {
+        sessions.push({ session: store.bot_session, label: 'Secretária IA', role: 'bot', wahaUrl: store.waha_url });
+      }
+      if (store.support_session) {
+        sessions.push({ session: store.support_session, label: 'Suporte', role: 'support', wahaUrl: store.waha_url });
+      }
 
-    if (store.support_session) {
-      sessions.push({
-        session: store.support_session,
-        label: 'Suporte',
-        role: 'support',
-        wahaUrl: store.waha_url,
-      });
-    }
+      for (const v of vendorList.filter(v => v.store_id === store.id && v.waha_session)) {
+        if (!sessions.some(s => s.session === v.waha_session)) {
+          sessions.push({
+            session: v.waha_session!,
+            label: v.name.replace(/\b\w/g, c => c.toUpperCase()),
+            role: 'vendor',
+            wahaUrl: store.waha_url,
+          });
+        }
+      }
 
-    const storeVendors = vendorList.filter(v => v.store_id === store.id && v.waha_session);
-    for (const v of storeVendors) {
-      // Evita duplicar sessões que já foram listadas (bot/suporte podem coincidir)
-      const alreadyAdded = sessions.some(s => s.session === v.waha_session);
-      if (!alreadyAdded) {
+      return { storeId: store.id, storeSlug: store.slug, sessions };
+    });
+  } else {
+    // Usuário comum: apenas as sessões das suas inboxes
+    const byStore = new Map<number, SessionDef[]>();
+
+    for (const inbox of user.inboxes) {
+      const store = storeMap.get(inbox.storeId);
+      if (!store) continue;
+
+      if (!byStore.has(inbox.storeId)) byStore.set(inbox.storeId, []);
+      const sessions = byStore.get(inbox.storeId)!;
+
+      if (!sessions.some(s => s.session === inbox.wahaSession)) {
         sessions.push({
-          session: v.waha_session!,
-          label: vendorLabel(v.name),
-          role: 'vendor',
+          session: inbox.wahaSession,
+          label: inbox.displayName,
+          role: inbox.kind === 'ai' ? 'bot' : inbox.kind === 'support' ? 'support' : 'vendor',
           wahaUrl: store.waha_url,
         });
       }
     }
 
-    return { store, sessions };
-  });
+    storeGroups = Array.from(byStore.entries()).map(([storeId, sessions]) => ({
+      storeId,
+      storeSlug: storeMap.get(storeId)?.slug ?? String(storeId),
+      sessions,
+    }));
+  }
+
+  // Remove grupos sem sessões
+  const groups = storeGroups.filter(g => g.sessions.length > 0);
 
   return (
     <div className="min-h-screen">
-      {/* Top bar */}
       <div className="hairline-b">
         <div className="h-16 px-8 flex items-center justify-between">
           <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">
-            Administração · Conexões
+            Conexões
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
             <span className="w-1.5 h-1.5 rounded-full bg-fg-subtle/40 animate-pulse" />
@@ -108,7 +105,6 @@ export default async function ConexoesPage() {
       </div>
 
       <div className="px-8 py-12 max-w-5xl mx-auto">
-        {/* Título */}
         <div className="mb-12 animate-slide-up">
           <div className="w-12 h-12 rounded-2xl border border-border bg-surface-muted grid place-items-center text-fg-muted mb-5">
             <Wifi size={20} strokeWidth={1.5} />
@@ -117,41 +113,34 @@ export default async function ConexoesPage() {
             Conexões
           </h1>
           <p className="mt-3 text-[14px] text-fg-muted max-w-lg leading-relaxed">
-            Status em tempo real de todas as sessões de mensagens.
+            Status em tempo real das suas sessões de mensagens.
             Clique em <strong className="font-medium text-fg">Ver QR code</strong> para reconectar um número.
           </p>
         </div>
 
-        {/* Grupos por loja */}
-        <div className="space-y-10">
-          {storeGroups.map(({ store, sessions }) => (
-            <div key={store.id} className="animate-slide-up">
-              {/* Nome da loja */}
-              <div className="flex items-center gap-3 mb-4">
-                <h2 className="text-[17px] font-semibold tracking-tight">
-                  {displaySlug(store.slug)}
-                </h2>
-                <span className="text-[10px] uppercase tracking-[0.14em] text-fg-subtle border border-border rounded px-1.5 py-0.5">
-                  {sessions.length} sessão{sessions.length !== 1 ? 'ões' : ''}
-                </span>
-              </div>
-
-              {sessions.length === 0 ? (
-                <p className="text-[13px] text-fg-muted">Nenhuma sessão configurada.</p>
-              ) : (
+        {groups.length === 0 ? (
+          <p className="text-[14px] text-fg-muted">Nenhuma sessão disponível.</p>
+        ) : (
+          <div className="space-y-10">
+            {groups.map(({ storeId, storeSlug, sessions }) => (
+              <div key={storeId} className="animate-slide-up">
+                <div className="flex items-center gap-3 mb-4">
+                  <h2 className="text-[17px] font-semibold tracking-tight">
+                    {displaySlug(storeSlug)}
+                  </h2>
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-fg-subtle border border-border rounded px-1.5 py-0.5">
+                    {sessions.length} sessão{sessions.length !== 1 ? 'ões' : ''}
+                  </span>
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {sessions.map(def => (
-                    <SessionCard
-                      key={`${store.id}-${def.session}`}
-                      def={def}
-                      storeSlug={store.slug}
-                    />
+                    <SessionCard key={`${storeId}-${def.session}`} def={def} storeSlug={storeSlug} />
                   ))}
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
