@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
-import { Users, Building2, MessageSquare, Clock, ChevronRight, UserCheck, Tag, Wifi } from 'lucide-react';
+import { Users, Building2, MessageSquare, Clock, ChevronRight, UserCheck, Tag, Wifi, UtensilsCrossed } from 'lucide-react';
 
 export default async function AdminHome() {
   const user = await getCurrentUser();
@@ -46,6 +46,14 @@ export default async function AdminHome() {
       icon: Wifi,
       title: 'Conexões',
       desc: 'Status das sessões de mensagens e reconexão via QR code',
+      available: true,
+      badge: null,
+    },
+    {
+      href: '/admin/vendedores',
+      icon: UtensilsCrossed,
+      title: 'Vendedores',
+      desc: 'Configurar horário de almoço por vendedor',
       available: true,
       badge: null,
     },

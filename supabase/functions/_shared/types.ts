@@ -44,6 +44,8 @@ export interface VendorConfig {
   greeting_off: string;
   queue_order:  number | null;
   active:       boolean;
+  lunch_start:  string | null;
+  lunch_end:    string | null;
 }
 
 export interface MessageBufferRow {
