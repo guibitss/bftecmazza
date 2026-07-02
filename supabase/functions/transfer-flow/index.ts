@@ -113,9 +113,13 @@ async function handleTransfer(input: TransferFlowInput) {
 
   // 3. Saudação ao cliente
   const greeting = inHours ? vendor.greeting : vendor.greeting_off;
+  // GOWS engine não consegue enviar para @lid — usa telefone@c.us como fallback
+  const destId = input.waha_id.endsWith('@lid') && input.telefone
+    ? input.telefone.replace(/^\+/, '') + '@c.us'
+    : input.waha_id;
   try {
     const t0 = Date.now();
-    await sendText(input.waha_id, greeting, vendor.waha_session, store.waha_url);
+    await sendText(destId, greeting, vendor.waha_session, store.waha_url);
     audit(src, storeId, tel, 'greeting_ok', vendor.name, { ms: Date.now() - t0, session: vendor.waha_session });
   } catch (err) {
     console.error(`${tag} greeting FAILED:`, err);
