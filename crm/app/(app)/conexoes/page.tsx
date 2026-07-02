@@ -50,7 +50,7 @@ export default async function ConexoesPage() {
         if (!sessions.some(s => s.session === v.waha_session)) {
           sessions.push({
             session: v.waha_session!,
-            label: v.name.replace(/\b\w/g, c => c.toUpperCase()),
+            label: v.name.replace(/\b\w/g, (c: string) => c.toUpperCase()),
             role: 'vendor',
             wahaUrl: store.waha_url,
           });
@@ -59,27 +59,46 @@ export default async function ConexoesPage() {
 
       return { storeId: store.id, storeSlug: store.slug, sessions };
     });
-  } else {
-    // Usuário comum: apenas as sessões das suas inboxes
-    const byStore = new Map<number, SessionDef[]>();
+  } else if (user.managerOfStoreId) {
+    // Gerente: vê TODAS as sessões da sua loja
+    const { data: allInboxes } = await admin
+      .from('inboxes')
+      .select('id, store_id, kind, waha_session, display_name')
+      .eq('store_id', user.managerOfStoreId)
+      .eq('active', true)
+      .order('kind');
 
+    const sessions: SessionDef[] = [];
+    const store = storeMap.get(user.managerOfStoreId);
+    if (store) {
+      for (const inbox of allInboxes ?? []) {
+        const kind = inbox.kind as string;
+        sessions.push({
+          session: inbox.waha_session as string,
+          label:   inbox.display_name as string,
+          role:    kind === 'ai' ? 'bot' : kind === 'support' ? 'support' : 'vendor',
+          wahaUrl: store.waha_url,
+        });
+      }
+      storeGroups = [{ storeId: user.managerOfStoreId, storeSlug: store.slug, sessions }];
+    }
+  } else {
+    // Vendedor/colaborador: vê apenas as sessões das suas inboxes
+    const byStore = new Map<number, SessionDef[]>();
     for (const inbox of user.inboxes) {
       const store = storeMap.get(inbox.storeId);
       if (!store) continue;
-
       if (!byStore.has(inbox.storeId)) byStore.set(inbox.storeId, []);
       const sessions = byStore.get(inbox.storeId)!;
-
       if (!sessions.some(s => s.session === inbox.wahaSession)) {
         sessions.push({
           session: inbox.wahaSession,
-          label: inbox.displayName,
-          role: inbox.kind === 'ai' ? 'bot' : inbox.kind === 'support' ? 'support' : 'vendor',
+          label:   inbox.displayName,
+          role:    inbox.kind === 'ai' ? 'bot' : inbox.kind === 'support' ? 'support' : 'vendor',
           wahaUrl: store.waha_url,
         });
       }
     }
-
     storeGroups = Array.from(byStore.entries()).map(([storeId, sessions]) => ({
       storeId,
       storeSlug: storeMap.get(storeId)?.slug ?? String(storeId),
