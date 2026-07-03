@@ -139,6 +139,18 @@ Deno.serve(async (req) => {
   }
 });
 
+// Fallback para números BR com nono dígito: 55 + DDD(2) + 9DIGITOS → tenta sem o 9 inicial
+function alternativeBrChatId(chatId: string): string | null {
+  const m = chatId.match(/^(\d+)(@.+)$/);
+  if (!m) return null;
+  const [, number, suffix] = m;
+  if (number.startsWith('55') && number.length === 13) {
+    const phone = number.slice(4);
+    if (phone.startsWith('9')) return `${number.slice(0, 4)}${phone.slice(1)}${suffix}`;
+  }
+  return null;
+}
+
 async function callWaha(wahaUrl: string, input: SendInput, chatId: string): Promise<unknown> {
   const headers = { 'X-Api-Key': WAHA_API_KEY, 'Content-Type': 'application/json' };
   const base = { chatId, session: input.via_session };
@@ -174,6 +186,20 @@ async function callWaha(wahaUrl: string, input: SendInput, chatId: string): Prom
   const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
+    // Tenta sem o nono dígito se o engine não encontrou o LID
+    if (txt.includes('no LID found') || txt.includes('463')) {
+      const alt = alternativeBrChatId(chatId);
+      if (alt) {
+        const res2 = await fetch(endpoint, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ...body, chatId: alt }),
+        });
+        if (res2.ok) return await res2.json().catch(() => ({}));
+        const txt2 = await res2.text().catch(() => '');
+        throw new Error(`WAHA ${res2.status}: ${txt2.slice(0, 200)}`);
+      }
+    }
     throw new Error(`WAHA ${res.status}: ${txt.slice(0, 200)}`);
   }
   return await res.json().catch(() => ({}));

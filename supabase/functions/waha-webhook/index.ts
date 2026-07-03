@@ -168,7 +168,6 @@ async function ingestMessage(body: WahaPayload) {
     media_filename:  mediaFilename,
     ack:             Number(p.ack ?? 0),
     sent_via:        'waha',
-    raw:             p,
   });
 
   // Ignora duplicata silenciosamente (idempotência)
