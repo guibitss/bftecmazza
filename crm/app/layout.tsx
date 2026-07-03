@@ -31,6 +31,7 @@ export default function RootLayout({
     >
       <head>
         <ThemeScript />
+        <link rel="preconnect" href="https://gmlclkolzcchjstzdilt.supabase.co" crossOrigin="anonymous" />
       </head>
       <body className="min-h-full bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
         <ThemeProvider>{children}</ThemeProvider>

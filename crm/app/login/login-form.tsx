@@ -1,14 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ArrowRight, AlertCircle } from 'lucide-react';
 
 export default function LoginForm() {
-  const router = useRouter();
   const search = useSearchParams();
   const next = search.get('next') ?? '/';
 
@@ -35,8 +34,9 @@ export default function LoginForm() {
       return;
     }
 
-    router.push(next);
-    router.refresh();
+    // Navegação completa única: garante cookies frescos no SSR sem o
+    // par push+refresh, que disparava múltiplos round trips RSC
+    window.location.assign(next);
   }
 
   return (

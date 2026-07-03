@@ -1,6 +1,6 @@
 'use client';
 
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useMemo } from 'react';
 import { ConversationList } from './conversation-list';
 import { Thread } from './thread';
@@ -15,7 +15,6 @@ interface Props {
 }
 
 export function InboxShell({ groups }: Props) {
-  const router = useRouter();
   const search = useSearchParams();
   const inboxId = search.get('inbox');
   const convId  = search.get('conv');
@@ -30,7 +29,8 @@ export function InboxShell({ groups }: Props) {
   function selectConv(id: number | null) {
     const sp = new URLSearchParams(search.toString());
     if (id) sp.set('conv', String(id)); else sp.delete('conv');
-    router.push(`/inbox?${sp.toString()}`, { scroll: false });
+    // pushState evita round trip RSC ao servidor — troca de conversa é instantânea
+    window.history.pushState(null, '', `/inbox?${sp.toString()}`);
   }
 
   // Sem nenhuma caixa atribuída

@@ -122,7 +122,13 @@ export function Sidebar({ user }: { user: CurrentUser }) {
                   const href = `/inbox?inbox=${ib.inboxId}`;
                   const active = activeInbox === String(ib.inboxId);
                   return (
-                    <Link key={ib.inboxId} href={href} className={cn(
+                    <Link key={ib.inboxId} href={href} onClick={(e) => {
+                      // Já no inbox: pushState evita round trip RSC — troca instantânea
+                      if (pathname === '/inbox') {
+                        e.preventDefault();
+                        window.history.pushState(null, '', href);
+                      }
+                    }} className={cn(
                       'group relative flex items-center gap-2.5 px-3 py-1.5 rounded-lg',
                       'text-[12.5px] transition-all duration-150',
                       active

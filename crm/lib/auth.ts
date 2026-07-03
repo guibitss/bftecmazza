@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 
@@ -29,7 +30,7 @@ export interface CurrentUser {
   groups:  InboxGroup[];      // agrupado por loja pra UI
 }
 
-export async function getCurrentUser(): Promise<CurrentUser> {
+export const getCurrentUser = cache(async (): Promise<CurrentUser> => {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -137,4 +138,4 @@ export async function getCurrentUser(): Promise<CurrentUser> {
     inboxes,
     groups,
   };
-}
+});
