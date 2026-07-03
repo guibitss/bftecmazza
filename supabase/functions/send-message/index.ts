@@ -65,10 +65,15 @@ Deno.serve(async (req) => {
   // 1. Pega a conversa (com RLS o user só vê conversas que pode acessar)
   const { data: conv, error: convErr } = await userClient
     .from('conversations')
-    .select('id, inbox_id, store_id, waha_id')
+    .select('id, inbox_id, store_id, waha_id, customer_phone')
     .eq('id', input.conversation_id)
     .maybeSingle();
   if (convErr || !conv) return json({ ok: false, error: 'conversation not found / no access' }, 403);
+
+  // GOWS engine não consegue enviar para @lid — converte para @c.us
+  const chatId = (conv.waha_id as string).endsWith('@lid') && conv.customer_phone
+    ? (conv.customer_phone as string).replace(/^\+/, '') + '@c.us'
+    : (conv.waha_id as string);
 
   // 2. Resolve sessão escolhida → store + URL + role/vendor
   const { data: resolved } = await admin.rpc('resolve_session', { p_session: input.via_session });
@@ -113,7 +118,7 @@ Deno.serve(async (req) => {
 
   // 4. Chama WAHA
   try {
-    const wahaRes = await callWaha(wahaUrl, input, conv.waha_id);
+    const wahaRes = await callWaha(wahaUrl, input, chatId);
     // 5. Atualiza waha_message_id pra idempotência futura
     const wahaMessageId = String((wahaRes as { id?: string; ID?: string })?.id ?? (wahaRes as { ID?: string })?.ID ?? '');
     if (wahaMessageId) {
