@@ -1,5 +1,6 @@
+import { Suspense } from 'react';
 import { createClient } from '@/lib/supabase/server';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, type CurrentUser } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
 import { ArrowUpRight, MessagesSquare, UserCheck, Sparkles, ShieldUser } from 'lucide-react';
@@ -8,10 +9,19 @@ import { VendorMetricsTable, VendorMetricsHero, type VendorMetric } from '@/comp
 type Trend = 'up' | 'down' | 'flat';
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
 
+// Cache em memória: métricas de 30 dias não precisam de frescor por request.
+// Processo único no VPS → módulo compartilhado entre requests.
+const metricsCache = new Map<number, { rows: VendorMetric[]; at: number }>();
+const METRICS_TTL_MS = 120_000;
+
 async function loadStoreVendorMetrics(storeId: number): Promise<VendorMetric[]> {
+  const hit = metricsCache.get(storeId);
+  if (hit && Date.now() - hit.at < METRICS_TTL_MS) return hit.rows;
   const admin = createAdminClient();
   const { data } = await admin.rpc('store_vendor_metrics', { p_store_id: storeId, p_days: 30 });
-  return (data ?? []) as VendorMetric[];
+  const rows = (data ?? []) as VendorMetric[];
+  metricsCache.set(storeId, { rows, at: Date.now() });
+  return rows;
 }
 
 export default async function Dashboard() {
@@ -56,50 +66,6 @@ export default async function Dashboard() {
     { icon: UserCheck,      label: 'Transferências (7d)', value: fmt(done),       hint: `${transferRate}% de conclusão` },
     { icon: ShieldUser,     label: 'Seu perfil',          value: user.isAdmin ? 'Admin' : user.managerOfStoreId ? 'Gerente' : user.vendorIds.length > 0 ? 'Vendedor' : '—', hint: user.isAdmin ? 'todas as lojas' : user.managerOfStoreId ? `loja #${user.managerOfStoreId}` : `${user.vendorIds.length} vendedor(es)` },
   ];
-
-  // ──── Métricas de vendedores conforme o perfil ────
-  const adminClient = createAdminClient();
-
-  // Admin → todas as lojas
-  // Gerente → sua loja
-  // Vendedor → suas vendor_ids agregadas
-  let perStoreMetrics: { storeId: number; storeSlug: string; rows: VendorMetric[] }[] = [];
-  let personalMetric: VendorMetric | null = null;
-
-  if (user.isAdmin) {
-    perStoreMetrics = await Promise.all(
-      (stores.data ?? []).map(async s => ({
-        storeId: s.id,
-        storeSlug: s.slug,
-        rows: await loadStoreVendorMetrics(s.id),
-      })),
-    );
-  } else if (user.managerOfStoreId) {
-    const storeRow = (stores.data ?? []).find(s => s.id === user.managerOfStoreId);
-    perStoreMetrics = [{
-      storeId: user.managerOfStoreId,
-      storeSlug: storeRow?.slug ?? '',
-      rows: await loadStoreVendorMetrics(user.managerOfStoreId),
-    }];
-  } else if (user.vendorIds.length === 1) {
-    const { data } = await adminClient.rpc('store_vendor_metrics', { p_store_id: 0, p_days: 30 });
-    // Pega via vendor_response/volume direto pra esse vendor
-    const { data: rh } = await adminClient.rpc('vendor_response_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30, p_in_hours: true });
-    const { data: ro } = await adminClient.rpc('vendor_response_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30, p_in_hours: false });
-    const { data: vol } = await adminClient.rpc('vendor_volume_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30 });
-    const { data: vendor } = await adminClient.from('vendors').select('id, name').eq('id', user.vendorIds[0]).single();
-    personalMetric = {
-      vendor_id: vendor!.id,
-      vendor_name: vendor!.name,
-      in_hours_avg_secs: rh?.[0]?.avg_seconds ?? null,
-      in_hours_count: rh?.[0]?.responses_count ?? 0,
-      off_hours_avg_secs: ro?.[0]?.avg_seconds ?? null,
-      off_hours_count: ro?.[0]?.responses_count ?? 0,
-      contacts: vol?.[0]?.contacts ?? 0,
-      msgs_per_contact: vol?.[0]?.msgs_per_contact ?? null,
-    };
-    void data; // silencia lint
-  }
 
   return (
     <div className="relative min-h-screen">
@@ -148,33 +114,101 @@ export default async function Dashboard() {
           })}
         </div>
 
-        {/* MÉTRICAS PESSOAIS (vendedor) */}
-        {personalMetric && (
-          <div className="mb-12">
-            <div className="flex items-center gap-4 mb-5">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">Suas métricas — 30 dias</div>
-              <div className="flex-1 h-px bg-border" />
-            </div>
-            <VendorMetricsHero metric={personalMetric} />
-          </div>
-        )}
-
-        {/* MÉTRICAS POR LOJA (admin / gerente) */}
-        {perStoreMetrics.map((m) => (
-          <div key={m.storeId} className="mb-10">
-            <div className="flex items-center gap-4 mb-5">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">
-                Métricas dos vendedores · {m.storeSlug}
-              </div>
-              <div className="flex-1 h-px bg-border" />
-            </div>
-            <VendorMetricsTable
-              rows={m.rows}
-              subtitle="Últimos 30 dias · tempo entre msg do cliente e 1ª resposta do vendedor"
-            />
-          </div>
-        ))}
+        {/* MÉTRICAS (streaming: a página abre na hora, tabelas chegam depois) */}
+        <Suspense fallback={<MetricsSkeleton />}>
+          <MetricsSection user={user} stores={stores.data ?? []} />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+function MetricsSkeleton() {
+  return (
+    <div className="mb-10 animate-pulse">
+      <div className="h-3 w-56 rounded bg-surface-muted mb-5" />
+      <Card className="p-6 space-y-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-9 rounded-lg bg-surface-muted" />
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+// ──── Métricas de vendedores conforme o perfil (async → Suspense) ────
+// Admin → todas as lojas | Gerente → sua loja | Vendedor → métricas pessoais
+async function MetricsSection({ user, stores }: {
+  user: CurrentUser;
+  stores: { id: number; slug: string }[];
+}) {
+  const adminClient = createAdminClient();
+
+  let perStoreMetrics: { storeId: number; storeSlug: string; rows: VendorMetric[] }[] = [];
+  let personalMetric: VendorMetric | null = null;
+
+  if (user.isAdmin) {
+    perStoreMetrics = await Promise.all(
+      stores.map(async s => ({
+        storeId: s.id,
+        storeSlug: s.slug,
+        rows: await loadStoreVendorMetrics(s.id),
+      })),
+    );
+  } else if (user.managerOfStoreId) {
+    const storeRow = stores.find(s => s.id === user.managerOfStoreId);
+    perStoreMetrics = [{
+      storeId: user.managerOfStoreId,
+      storeSlug: storeRow?.slug ?? '',
+      rows: await loadStoreVendorMetrics(user.managerOfStoreId),
+    }];
+  } else if (user.vendorIds.length === 1) {
+    const [{ data: rh }, { data: ro }, { data: vol }, { data: vendor }] = await Promise.all([
+      adminClient.rpc('vendor_response_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30, p_in_hours: true }),
+      adminClient.rpc('vendor_response_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30, p_in_hours: false }),
+      adminClient.rpc('vendor_volume_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30 }),
+      adminClient.from('vendors').select('id, name').eq('id', user.vendorIds[0]).single(),
+    ]);
+    personalMetric = {
+      vendor_id: vendor!.id,
+      vendor_name: vendor!.name,
+      in_hours_avg_secs: rh?.[0]?.avg_seconds ?? null,
+      in_hours_count: rh?.[0]?.responses_count ?? 0,
+      off_hours_avg_secs: ro?.[0]?.avg_seconds ?? null,
+      off_hours_count: ro?.[0]?.responses_count ?? 0,
+      contacts: vol?.[0]?.contacts ?? 0,
+      msgs_per_contact: vol?.[0]?.msgs_per_contact ?? null,
+    };
+  }
+
+  return (
+    <>
+      {/* MÉTRICAS PESSOAIS (vendedor) */}
+      {personalMetric && (
+        <div className="mb-12">
+          <div className="flex items-center gap-4 mb-5">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">Suas métricas — 30 dias</div>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+          <VendorMetricsHero metric={personalMetric} />
+        </div>
+      )}
+
+      {/* MÉTRICAS POR LOJA (admin / gerente) */}
+      {perStoreMetrics.map((m) => (
+        <div key={m.storeId} className="mb-10">
+          <div className="flex items-center gap-4 mb-5">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">
+              Métricas dos vendedores · {m.storeSlug}
+            </div>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+          <VendorMetricsTable
+            rows={m.rows}
+            subtitle="Últimos 30 dias · tempo entre msg do cliente e 1ª resposta do vendedor"
+          />
+        </div>
+      ))}
+    </>
   );
 }
