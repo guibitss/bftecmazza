@@ -1,0 +1,14 @@
+project_id = "gmlclkolzcchjstzdilt"
+
+# Webhooks públicos — WAHA e Chatwoot enviam POST sem JWT do Supabase.
+# NUNCA remover: deploy sem essa config reativa verify_jwt e derruba a
+# ingestão de mensagens silenciosamente (aconteceu em 30/06/2026 — 7 dias
+# de mensagens perdidas até ser detectado).
+[functions.waha-webhook]
+verify_jwt = false
+
+[functions.chatwoot-webhook]
+verify_jwt = false
+
+[functions.waha-status]
+verify_jwt = false
