@@ -18,9 +18,10 @@ async function loadStoreVendorMetrics(storeId: number): Promise<VendorMetric[]> 
   const hit = metricsCache.get(storeId);
   if (hit && Date.now() - hit.at < METRICS_TTL_MS) return hit.rows;
   const admin = createAdminClient();
-  const { data } = await admin.rpc('store_vendor_metrics', { p_store_id: storeId, p_days: 30 });
+  const { data, error } = await admin.rpc('store_vendor_metrics', { p_store_id: storeId, p_days: 30 });
   const rows = (data ?? []) as VendorMetric[];
-  metricsCache.set(storeId, { rows, at: Date.now() });
+  // Erro (ex: timeout) não entra no cache — senão a tabela fica presa em "Sem dados"
+  if (!error) metricsCache.set(storeId, { rows, at: Date.now() });
   return rows;
 }
 
