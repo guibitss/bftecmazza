@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Bell,
   Tag,
+  Clock,
   Wifi,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
@@ -36,6 +37,7 @@ const NAV: NavItem[] = [
   { href: '/tratativas', label: 'Tratativas',  icon: ClipboardList },
   { href: '/alertas',    label: 'Alertas',     icon: Bell, managerOnly: true },
   { href: '/etiquetas',  label: 'Etiquetas',   icon: Tag },
+  { href: '/horarios',   label: 'Horários',    icon: Clock },
   { href: '/conexoes',   label: 'Conexões',    icon: Wifi },
   { href: '/admin',      label: 'Admin',       icon: Settings, adminOnly: true },
 ];
