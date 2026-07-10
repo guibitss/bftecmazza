@@ -35,7 +35,7 @@ const NAV: NavItem[] = [
   { href: '/inbox',      label: 'Inbox',       icon: InboxIcon },
   { href: '/tratativas', label: 'Tratativas',  icon: ClipboardList },
   { href: '/alertas',    label: 'Alertas',     icon: Bell, managerOnly: true },
-  { href: '/etiquetas',  label: 'Etiquetas',   icon: Tag, managerOnly: true },
+  { href: '/etiquetas',  label: 'Etiquetas',   icon: Tag },
   { href: '/conexoes',   label: 'Conexões',    icon: Wifi },
   { href: '/admin',      label: 'Admin',       icon: Settings, adminOnly: true },
 ];

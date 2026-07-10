@@ -48,9 +48,10 @@ function ColorPicker({
 interface LabelFormProps {
   initialName?: string;
   initialColor?: string;
-  onSave: (name: string, color: string) => void;
+  onSave: (name: string, color: string, personal: boolean) => void;
   onCancel: () => void;
   pending: boolean;
+  showTypePicker?: boolean;   // só na criação — tipo não muda depois
 }
 
 function LabelForm({
@@ -59,9 +60,11 @@ function LabelForm({
   onSave,
   onCancel,
   pending,
+  showTypePicker = false,
 }: LabelFormProps) {
   const [name, setName] = useState(initialName);
   const [color, setColor] = useState(initialColor);
+  const [personal, setPersonal] = useState(false);
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3 bg-surface-muted/50">
@@ -74,15 +77,37 @@ function LabelForm({
         className="h-9 px-3 rounded-lg border border-border bg-surface text-[13.5px] focus:outline-none focus:border-border-strong transition-colors"
         autoFocus
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && name.trim()) onSave(name, color);
+          if (e.key === 'Enter' && name.trim()) onSave(name, color, personal);
           if (e.key === 'Escape') onCancel();
         }}
       />
       <ColorPicker value={color} onChange={setColor} />
+      {showTypePicker && (
+        <div className="flex items-center gap-1.5">
+          {([['Geral', false], ['Pessoal', true]] as const).map(([label, isPersonal]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setPersonal(isPersonal)}
+              className={cn(
+                'px-3 py-1 rounded-full text-[12px] font-medium border transition-colors',
+                personal === isPersonal
+                  ? 'bg-ink-950 dark:bg-white text-white dark:text-ink-950 border-transparent'
+                  : 'border-border text-fg-muted hover:text-fg',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="text-[11px] text-fg-subtle ml-1.5">
+            {personal ? 'só você vê' : 'toda a loja vê'}
+          </span>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => name.trim() && onSave(name, color)}
+          onClick={() => name.trim() && onSave(name, color, personal)}
           disabled={!name.trim() || pending}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-ink-950 dark:bg-white text-white dark:text-ink-950 text-[12.5px] font-medium disabled:opacity-50 transition-opacity"
         >
@@ -104,9 +129,11 @@ function LabelForm({
 export function LabelsClient({
   stores,
   initialLabels,
+  userId,
 }: {
   stores: StoreRow[];
   initialLabels: LabelRow[];
+  userId: string;
 }) {
   const [labels, setLabels] = useState<LabelRow[]>(initialLabels);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -115,13 +142,15 @@ export function LabelsClient({
   const [pending, startTransition] = useTransition();
 
   function labelsForStore(storeId: number) {
-    return labels.filter((l) => l.store_id === storeId);
+    return labels
+      .filter((l) => l.store_id === storeId)
+      .sort((a, b) => Number(a.owner_user_id != null) - Number(b.owner_user_id != null));
   }
 
-  function handleCreate(storeId: number, name: string, color: string) {
+  function handleCreate(storeId: number, name: string, color: string, personal: boolean) {
     setError(null);
     startTransition(async () => {
-      const res = await createLabel(storeId, name, color);
+      const res = await createLabel(storeId, name, color, personal);
       if (res.ok && res.id) {
         const newLabel: LabelRow = {
           id: res.id,
@@ -129,6 +158,7 @@ export function LabelsClient({
           name,
           color,
           created_at: new Date().toISOString(),
+          owner_user_id: personal ? userId : null,
         };
         setLabels((prev) => [...prev, newLabel]);
         setCreatingForStore(null);
@@ -225,7 +255,14 @@ export function LabelsClient({
                         className="w-3 h-3 rounded-full shrink-0"
                         style={{ backgroundColor: label.color }}
                       />
-                      <span className="text-[13.5px] font-medium flex-1">{label.name}</span>
+                      <span className="text-[13.5px] font-medium flex-1 flex items-center gap-2">
+                        {label.name}
+                        {label.owner_user_id && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9.5px] uppercase tracking-wider bg-surface-muted text-fg-subtle border border-border">
+                            pessoal
+                          </span>
+                        )}
+                      </span>
                       <button
                         type="button"
                         onClick={() => setEditingId(label.id)}
@@ -248,7 +285,8 @@ export function LabelsClient({
 
                 {isCreating && (
                   <LabelForm
-                    onSave={(name, color) => handleCreate(store.id, name, color)}
+                    showTypePicker
+                    onSave={(name, color, personal) => handleCreate(store.id, name, color, personal)}
                     onCancel={() => setCreatingForStore(null)}
                     pending={pending}
                   />
