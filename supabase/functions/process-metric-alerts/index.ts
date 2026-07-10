@@ -108,15 +108,16 @@ async function calcMetric(a: AlertRow): Promise<{ value: number | null; label: s
 async function checkAndFire(a: AlertRow) {
   if (withinCooldown(a)) return;
 
+  if (a.metric === 'session_down') {
+    await checkSessionsDown(a);
+    return;
+  }
+
   const { value, label } = await calcMetric(a);
   if (value == null) return;
 
   const violated = a.comparison === 'gt' ? value > Number(a.threshold) : value < Number(a.threshold);
   if (!violated) return;
-
-  const rawPhone = a.whatsapp_number.replace(/\D/g, '');
-  if (!rawPhone) return;
-  const variations = brazilianPhoneVariations(rawPhone);
 
   const scope = a.vendor_id ? `vendedora *${a.vendors?.name ?? ''}*` : 'loja inteira';
   const cmp = a.comparison === 'gt' ? 'acima' : 'abaixo';
@@ -134,12 +135,78 @@ ${scope}
 ${label}: *${fmtValue}* (${cmp} de ${fmtThreshold})
 _últimos 30 dias_`;
 
+  await fireText(a, text, a.stores.bot_session);
+}
+
+/**
+ * Alerta de desconexão: compara as caixas cadastradas da loja (inboxes
+ * ativas + sessão do bot) com o status real no servidor. Se alguma não
+ * está WORKING, avisa — enviando por qualquer sessão que esteja no ar.
+ */
+async function checkSessionsDown(a: AlertRow) {
+  const { data: inboxRows } = await supabase
+    .from('inboxes')
+    .select('waha_session, display_name')
+    .eq('store_id', a.store_id)
+    .eq('active', true);
+
+  const expected = new Map<string, string>();
+  for (const r of inboxRows ?? []) {
+    expected.set(r.waha_session as string, r.display_name as string);
+  }
+  expected.set(a.stores.bot_session, 'Bot');
+
+  let sessions: { name: string; status: string }[];
+  try {
+    const res = await fetch(`${a.stores.waha_url}/api/sessions?all=true`, {
+      headers: { 'X-Api-Key': WAHA_API_KEY },
+    });
+    if (!res.ok) { console.error(`alerta ${a.id} sessions ${res.status}`); return; }
+    sessions = await res.json();
+  } catch (err) {
+    console.error(`alerta ${a.id} sessions fetch err:`, err);
+    return;
+  }
+
+  const statusByName = new Map(sessions.map(s => [s.name, s.status]));
+  const down: string[] = [];
+  for (const [session, displayName] of expected) {
+    const st = statusByName.get(session);
+    if (st !== 'WORKING') down.push(`• *${displayName}* — ${st ?? 'não encontrada'}`);
+  }
+  if (down.length === 0) return;
+
+  // Envia por qualquer sessão da loja que esteja no ar (o bot pode ser a caída)
+  const sender = statusByName.get(a.stores.bot_session) === 'WORKING'
+    ? a.stores.bot_session
+    : [...expected.keys()].find(s => statusByName.get(s) === 'WORKING') ?? null;
+  if (!sender) {
+    console.error(`alerta ${a.id}: nenhuma sessão da loja no ar pra enviar o aviso`);
+    return;
+  }
+
+  const text =
+`🔴 *WhatsApp desconectado*
+
+${down.length} caixa(s) fora do ar:
+${down.join('\n')}
+
+_Reconecte na página Conexões do CRM._`;
+
+  await fireText(a, text, sender);
+}
+
+async function fireText(a: AlertRow, text: string, session: string) {
+  const rawPhone = a.whatsapp_number.replace(/\D/g, '');
+  if (!rawPhone) return;
+  const variations = brazilianPhoneVariations(rawPhone);
+
   for (const phone of variations) {
     try {
       const res = await fetch(`${a.stores.waha_url}/api/sendText`, {
         method: 'POST',
         headers: { 'X-Api-Key': WAHA_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId: `${phone}@c.us`, text, session: a.stores.bot_session, linkPreview: false }),
+        body: JSON.stringify({ chatId: `${phone}@c.us`, text, session, linkPreview: false }),
       });
       if (res.ok) {
         await supabase.from('metric_alerts')

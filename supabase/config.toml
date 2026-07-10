@@ -12,3 +12,10 @@ verify_jwt = false
 
 [functions.waha-status]
 verify_jwt = false
+
+# Chamadas pelo pg_cron SEM header de autenticação — mesmo risco do waha-webhook
+[functions.process-tratativas]
+verify_jwt = false
+
+[functions.process-metric-alerts]
+verify_jwt = false

@@ -29,6 +29,7 @@ const METRIC_OPTIONS = [
   { value: 'avg_response_off_hours', label: 'Tempo de resposta · fora do horário',   unit: 'segundos' },
   { value: 'contacts',               label: 'Quantidade de contatos atendidos',      unit: 'contatos' },
   { value: 'msgs_per_contact',       label: 'Mensagens por contato (média)',         unit: 'msgs' },
+  { value: 'session_down',           label: 'WhatsApp desconectado (qualquer caixa da loja)', unit: 'caixas fora do ar' },
 ];
 
 const FREQ_OPTIONS = [
