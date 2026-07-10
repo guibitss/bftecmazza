@@ -4,7 +4,7 @@
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getConversation } from '../_shared/chatwoot.ts';
-import { sendText } from '../_shared/waha.ts';
+import { sendText, resolveLid } from '../_shared/waha.ts';
 import { summarizeForVendor } from '../_shared/openai.ts';
 import { isWithinBusinessHours } from '../_shared/businessHours.ts';
 import { loadStoreById, loadVendors, findVendorByLabels, assignNextVendor } from '../_shared/store.ts';
@@ -113,10 +113,19 @@ async function handleTransfer(input: TransferFlowInput) {
 
   // 3. Saudação ao cliente
   const greeting = inHours ? vendor.greeting : vendor.greeting_off;
-  // GOWS engine não consegue enviar para @lid — usa telefone@c.us como fallback
-  const destId = input.waha_id.endsWith('@lid') && input.telefone
-    ? input.telefone.replace(/^\+/, '') + '@c.us'
-    : input.waha_id;
+  // GOWS engine não consegue enviar para @lid — resolve para telefone@c.us:
+  // usa o telefone do input ou o mapeamento LID que a sessão do bot conhece
+  // (a sessão do vendedor pode nunca ter visto esse contato)
+  let destId = input.waha_id;
+  if (destId.endsWith('@lid')) {
+    if (input.telefone) {
+      destId = input.telefone.replace(/^\+/, '') + '@c.us';
+    } else {
+      const pn = await resolveLid(destId, store.bot_session, store.waha_url);
+      if (pn) destId = pn;
+      else audit(src, storeId, tel, 'lid_unresolved', vendor.name, { waha_id: input.waha_id });
+    }
+  }
   try {
     const t0 = Date.now();
     await sendText(destId, greeting, vendor.waha_session, store.waha_url);

@@ -30,6 +30,29 @@ function isNoLidError(errText: string): boolean {
   return errText.includes('no LID found') || errText.includes('463');
 }
 
+/**
+ * Resolve um @lid para o telefone real (@c.us) usando o mapeamento que a
+ * sessão informada conhece (ex: a sessão do bot, que conversou com o cliente).
+ * Retorna null se o mapeamento não existir.
+ */
+export async function resolveLid(
+  lid: string,
+  session: string,
+  wahaUrl: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${wahaUrl}/api/${encodeURIComponent(session)}/lids/${encodeURIComponent(lid)}`,
+      { headers: headers() },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data?.pn as string) || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function sendText(
   chatId:  string,
   text:    string,

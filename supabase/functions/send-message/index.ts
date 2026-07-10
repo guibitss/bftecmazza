@@ -70,11 +70,6 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (convErr || !conv) return json({ ok: false, error: 'conversation not found / no access' }, 403);
 
-  // GOWS engine não consegue enviar para @lid — converte para @c.us
-  const chatId = (conv.waha_id as string).endsWith('@lid') && conv.customer_phone
-    ? (conv.customer_phone as string).replace(/^\+/, '') + '@c.us'
-    : (conv.waha_id as string);
-
   // 2. Resolve sessão escolhida → store + URL + role/vendor
   const { data: resolved } = await admin.rpc('resolve_session', { p_session: input.via_session });
   const sessionInfo = Array.isArray(resolved) ? resolved[0] : resolved;
@@ -85,9 +80,27 @@ Deno.serve(async (req) => {
 
   // Pega URL do WAHA da loja
   const { data: store } = await admin
-    .from('stores').select('waha_url').eq('id', conv.store_id).single();
+    .from('stores').select('waha_url, bot_session').eq('id', conv.store_id).single();
   if (!store) return json({ ok: false, error: 'loja não encontrada' }, 500);
   const wahaUrl = store.waha_url as string;
+
+  // GOWS engine não consegue enviar para @lid — resolve para telefone@c.us:
+  // usa o telefone da conversa ou o mapeamento LID que a sessão do bot conhece
+  let chatId = conv.waha_id as string;
+  if (chatId.endsWith('@lid')) {
+    if (conv.customer_phone) {
+      chatId = (conv.customer_phone as string).replace(/^\+/, '') + '@c.us';
+    } else {
+      const pn = await resolveLid(chatId, store.bot_session as string, wahaUrl);
+      if (pn) {
+        chatId = pn;
+        // Backfill: grava o telefone na conversa pros próximos envios
+        const phone = '+' + pn.replace(/@.+$/, '');
+        admin.from('conversations').update({ customer_phone: phone }).eq('id', conv.id)
+          .then(({ error }) => { if (error) console.error('backfill phone:', error); });
+      }
+    }
+  }
 
   const authorType =
     sessionInfo.session_role === 'vendor'  ? 'vendor'  :
@@ -149,6 +162,21 @@ function alternativeBrChatId(chatId: string): string | null {
     if (phone.startsWith('9')) return `${number.slice(0, 4)}${phone.slice(1)}${suffix}`;
   }
   return null;
+}
+
+// Resolve @lid → telefone@c.us pelo mapeamento que a sessão conhece
+async function resolveLid(lid: string, session: string, wahaUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${wahaUrl}/api/${encodeURIComponent(session)}/lids/${encodeURIComponent(lid)}`,
+      { headers: { 'X-Api-Key': WAHA_API_KEY } },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data?.pn as string) || null;
+  } catch {
+    return null;
+  }
 }
 
 async function callWaha(wahaUrl: string, input: SendInput, chatId: string): Promise<unknown> {
