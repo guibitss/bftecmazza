@@ -137,33 +137,32 @@ function MetricsSkeleton() {
   );
 }
 
-// ──── Métricas de vendedores conforme o perfil (async → Suspense) ────
-// Admin → todas as lojas | Gerente → sua loja | Vendedor → métricas pessoais
+// ──── Métricas de vendedores (async → Suspense) ────
+// Transparência total: TODOS veem o tempo de resposta de todas as lojas.
+// Vendedor mantém o card pessoal detalhado no topo.
 async function MetricsSection({ user, stores }: {
   user: CurrentUser;
   stores: { id: number; slug: string }[];
 }) {
   const adminClient = createAdminClient();
 
-  let perStoreMetrics: { storeId: number; storeSlug: string; rows: VendorMetric[] }[] = [];
   let personalMetric: VendorMetric | null = null;
 
-  if (user.isAdmin) {
-    perStoreMetrics = await Promise.all(
-      stores.map(async s => ({
-        storeId: s.id,
-        storeSlug: s.slug,
-        rows: await loadStoreVendorMetrics(s.id),
-      })),
-    );
-  } else if (user.managerOfStoreId) {
-    const storeRow = stores.find(s => s.id === user.managerOfStoreId);
-    perStoreMetrics = [{
-      storeId: user.managerOfStoreId,
-      storeSlug: storeRow?.slug ?? '',
-      rows: await loadStoreVendorMetrics(user.managerOfStoreId),
-    }];
-  } else if (user.vendorIds.length === 1) {
+  // Lista de lojas via admin client — a prop `stores` vem do client do usuário
+  // e RLS pode esconder lojas de vendedores; aqui todo mundo vê tudo
+  const { data: allStores } = await adminClient
+    .from('stores').select('id, slug').eq('active', true).order('id');
+  const storeList = ((allStores ?? stores) as { id: number; slug: string }[]);
+
+  const perStoreMetrics = await Promise.all(
+    storeList.map(async s => ({
+      storeId: s.id,
+      storeSlug: s.slug,
+      rows: await loadStoreVendorMetrics(s.id),
+    })),
+  );
+
+  if (!user.isAdmin && !user.managerOfStoreId && user.vendorIds.length === 1) {
     const [{ data: rh }, { data: ro }, { data: vol }, { data: vendor }] = await Promise.all([
       adminClient.rpc('vendor_response_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30, p_in_hours: true }),
       adminClient.rpc('vendor_response_metrics', { p_vendor_id: user.vendorIds[0], p_days: 30, p_in_hours: false }),
@@ -195,7 +194,7 @@ async function MetricsSection({ user, stores }: {
         </div>
       )}
 
-      {/* MÉTRICAS POR LOJA (admin / gerente) */}
+      {/* MÉTRICAS POR LOJA — visíveis pra todos */}
       {perStoreMetrics.map((m) => (
         <div key={m.storeId} className="mb-10">
           <div className="flex items-center gap-4 mb-5">
