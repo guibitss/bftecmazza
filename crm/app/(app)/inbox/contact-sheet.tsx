@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import {
   X, Phone, Hash, MessageCircle, Calendar, Building2,
-  StickyNote, Check, AlertCircle, Loader2,
+  StickyNote, Check, AlertCircle, Loader2, Tag, Plus,
 } from 'lucide-react';
 import { Avatar } from '@/components/avatar';
 import { formatPhone } from '@/lib/format';
@@ -180,6 +180,14 @@ export function ContactSheet({ convId, open, onClose, inboxLabel, storeSlug }: P
                 </Field>
               </div>
 
+              {/* Etiquetas */}
+              <div>
+                <h3 className="text-[11px] font-medium text-fg-muted uppercase tracking-[0.12em] flex items-center gap-1.5 mb-2">
+                  <Tag size={11} /> Etiquetas
+                </h3>
+                <SheetLabels convId={conv.id} storeId={conv.store_id} />
+              </div>
+
               {/* Notas */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -237,6 +245,107 @@ export function ContactSheet({ convId, open, onClose, inboxLabel, storeSlug }: P
         </div>
       </aside>
     </>
+  );
+}
+
+interface SheetLabelItem {
+  id: string;
+  name: string;
+  color: string;
+  owner_user_id: string | null;
+}
+
+function SheetLabels({ convId, storeId }: { convId: number; storeId: number }) {
+  const supabase = createClient();
+  const [labels, setLabels] = useState<SheetLabelItem[]>([]);
+  const [applied, setApplied] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setExpanded(false);
+    (async () => {
+      // RLS filtra: gerais da loja + pessoais do próprio usuário
+      const [{ data: lbls }, { data: cl }] = await Promise.all([
+        supabase.from('labels')
+          .select('id, name, color, owner_user_id')
+          .eq('store_id', storeId)
+          .order('created_at'),
+        supabase.from('conversation_labels')
+          .select('label_id')
+          .eq('conversation_id', convId),
+      ]);
+      if (cancelled) return;
+      setLabels((lbls ?? []) as SheetLabelItem[]);
+      setApplied(new Set(((cl ?? []) as { label_id: string }[]).map(r => r.label_id)));
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [convId, storeId, supabase]);
+
+  async function toggle(labelId: string) {
+    if (applied.has(labelId)) {
+      setApplied(prev => { const s = new Set(prev); s.delete(labelId); return s; });
+      await supabase.from('conversation_labels')
+        .delete().eq('conversation_id', convId).eq('label_id', labelId);
+    } else {
+      setApplied(prev => new Set([...prev, labelId]));
+      await supabase.from('conversation_labels')
+        .insert({ conversation_id: convId, label_id: labelId });
+    }
+  }
+
+  if (loading) return <div className="h-8 rounded-xl bg-surface-muted animate-pulse" />;
+
+  const appliedLabels = labels.filter(l => applied.has(l.id));
+
+  return (
+    <div className="space-y-2">
+      {/* Chips das aplicadas + botão adicionar */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {appliedLabels.map(l => (
+          <span key={l.id}
+            className="inline-flex items-center gap-1.5 pl-2 pr-1 py-0.5 rounded-full border border-border bg-surface text-[12px]">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: l.color }} />
+            {l.name}
+            <button type="button" onClick={() => toggle(l.id)}
+              className="p-0.5 rounded-full text-fg-subtle hover:text-fg hover:bg-surface-muted transition-colors"
+              title="Remover etiqueta">
+              <X size={11} strokeWidth={2} />
+            </button>
+          </span>
+        ))}
+        <button type="button" onClick={() => setExpanded(e => !e)}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-dashed border-border text-[12px] text-fg-muted hover:text-fg hover:border-border-strong transition-colors">
+          <Plus size={11} strokeWidth={2} />
+          {appliedLabels.length === 0 ? 'Adicionar etiqueta' : 'Adicionar'}
+        </button>
+      </div>
+
+      {/* Lista expandida pra marcar/desmarcar */}
+      {expanded && (
+        <div className="rounded-xl border border-border overflow-hidden bg-surface divide-y divide-border">
+          {labels.length === 0 ? (
+            <div className="px-3 py-3 text-[12.5px] text-fg-muted text-center">
+              Nenhuma etiqueta criada — crie na página Etiquetas.
+            </div>
+          ) : labels.map(l => (
+            <button key={l.id} type="button" onClick={() => toggle(l.id)}
+              className="w-full flex items-center gap-3 px-3 py-2 hover:bg-surface-muted transition-colors text-left">
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: l.color }} />
+              <span className="text-[13px] flex-1 truncate">
+                {l.name}
+                {l.owner_user_id && (
+                  <span className="ml-2 text-[9.5px] uppercase tracking-wider text-fg-subtle">pessoal</span>
+                )}
+              </span>
+              {applied.has(l.id) && <Check size={12} className="shrink-0" strokeWidth={2.5} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
