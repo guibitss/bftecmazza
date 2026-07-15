@@ -134,6 +134,9 @@ async function ingestMessage(body: WahaPayload) {
   const customerName = extractCustomerName(p);
   const customerPhone = extractCustomerPhone(p, chatId);
 
+  // Origem de anúncio (Click-to-WhatsApp) — vem na 1ª mensagem do lead
+  const adReferral = fromMe ? null : extractAdReferral(p);
+
   // Pega ou cria a conversa (uma por inbox+chatId)
   const conversationId = await upsertConversation({
     inboxId,
@@ -142,6 +145,7 @@ async function ingestMessage(body: WahaPayload) {
     customerPhone,
     customerName,
     session,
+    adReferral,
   });
 
   // Determina autor
@@ -184,6 +188,47 @@ async function updateAck(body: WahaPayload) {
   await supabase.from('messages').update({ ack }).eq('waha_message_id', wahaMessageId);
 }
 
+interface AdReferral {
+  ctwa_clid: string | null;
+  source_id: string | null;
+  source_url: string | null;
+  headline: string | null;
+}
+
+/**
+ * Extrai a origem de anúncio (Click-to-WhatsApp) da mensagem.
+ * Suporta o referral direto (WEBJS/oficial) e o contextInfo.externalAdReply
+ * do protocolo (GOWS/whatsmeow). Nunca lança — atribuição é opcional.
+ */
+function extractAdReferral(p: Record<string, unknown>): AdReferral | null {
+  try {
+    const direct = p.referral as Record<string, unknown> | undefined;
+    if (direct && (direct.ctwa_clid || direct.source_id || direct.source_url)) {
+      return {
+        ctwa_clid:  (direct.ctwa_clid as string) ?? null,
+        source_id:  (direct.source_id as string) ?? null,
+        source_url: (direct.source_url as string) ?? null,
+        headline:   (direct.headline as string) ?? (direct.ad_title as string) ?? null,
+      };
+    }
+    const msg = ((p._data as Record<string, unknown>)?.Message ?? {}) as Record<string, unknown>;
+    for (const v of Object.values(msg)) {
+      if (!v || typeof v !== 'object') continue;
+      const ctx = (v as Record<string, unknown>).contextInfo as Record<string, unknown> | undefined;
+      const ad = ctx?.externalAdReply as Record<string, unknown> | undefined;
+      if (ad && (ad.ctwaClid || ad.sourceID || ad.sourceId || ad.sourceURL || ad.sourceUrl)) {
+        return {
+          ctwa_clid:  (ad.ctwaClid as string) ?? null,
+          source_id:  (ad.sourceID as string) ?? (ad.sourceId as string) ?? null,
+          source_url: (ad.sourceURL as string) ?? (ad.sourceUrl as string) ?? null,
+          headline:   (ad.title as string) ?? null,
+        };
+      }
+    }
+  } catch { /* atribuição nunca pode quebrar o ingest */ }
+  return null;
+}
+
 async function upsertConversation(opts: {
   inboxId: number;
   storeId: number;
@@ -191,10 +236,11 @@ async function upsertConversation(opts: {
   customerPhone: string | null;
   customerName: string | null;
   session: string;
+  adReferral?: AdReferral | null;
 }): Promise<number> {
   const { data: existing } = await supabase
     .from('conversations')
-    .select('id, avatar_url')
+    .select('id, avatar_url, ad_ctwa_clid, ad_source_id')
     .eq('inbox_id', opts.inboxId)
     .eq('waha_id', opts.wahaId)
     .maybeSingle();
@@ -210,6 +256,15 @@ async function upsertConversation(opts: {
         .update(patch)
         .eq('id', existing.id)
         .or('customer_name.is.null,customer_phone.is.null');
+    }
+    // Atribuição first-touch: só grava se a conversa ainda não tem origem
+    if (opts.adReferral && !existing.ad_ctwa_clid && !existing.ad_source_id) {
+      await supabase.from('conversations').update({
+        ad_ctwa_clid:  opts.adReferral.ctwa_clid,
+        ad_source_id:  opts.adReferral.source_id,
+        ad_source_url: opts.adReferral.source_url,
+        ad_headline:   opts.adReferral.headline,
+      }).eq('id', existing.id);
     }
     // Se ainda não tem avatar, tenta buscar (fire-and-forget)
     if (!existing.avatar_url) {
@@ -227,6 +282,10 @@ async function upsertConversation(opts: {
       waha_id:         opts.wahaId,
       customer_phone:  opts.customerPhone,
       customer_name:   opts.customerName,
+      ad_ctwa_clid:    opts.adReferral?.ctwa_clid ?? null,
+      ad_source_id:    opts.adReferral?.source_id ?? null,
+      ad_source_url:   opts.adReferral?.source_url ?? null,
+      ad_headline:     opts.adReferral?.headline ?? null,
     })
     .select('id')
     .single();
