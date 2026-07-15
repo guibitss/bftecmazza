@@ -19,3 +19,6 @@ verify_jwt = false
 
 [functions.process-metric-alerts]
 verify_jwt = false
+
+[functions.reengage-check]
+verify_jwt = false

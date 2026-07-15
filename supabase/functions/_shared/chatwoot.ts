@@ -37,3 +37,12 @@ export async function downloadAttachment(url: string): Promise<ArrayBuffer> {
   if (!res.ok) throw new Error(`Chatwoot downloadAttachment ${res.status}`);
   return res.arrayBuffer();
 }
+
+export async function getMessages(accountId: number, conversationId: number) {
+  const res = await fetch(
+    `${CHATWOOT_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`,
+    { headers: headers() }
+  );
+  if (!res.ok) throw new Error(`Chatwoot getMessages ${res.status}`);
+  return res.json();
+}

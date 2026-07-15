@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import type { ConversationContext } from '../_shared/types.ts';
-import { loadStoreByInboxId } from '../_shared/store.ts';
+import { loadStoreByInboxId, loadVendors } from '../_shared/store.ts';
+import { sendText } from '../_shared/waha.ts';
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -63,7 +64,12 @@ async function handleWebhook(body: Record<string, unknown>) {
 
   // Filtros base
   if (ctx.tipo !== 'incoming')        return;
-  if (ctx.etiquetas.includes('equipe')) return;
+  if (ctx.etiquetas.includes('equipe')) {
+    // Cliente já encaminhado pra equipe voltou a chamar: avisa o responsável
+    // e registra pro reengajamento da IA (reengage-check) se ninguém responder
+    await handleTeamReturn(ctx, inboxId, firstAttach);
+    return;
+  }
   if (ctx.mensagem.includes('👥'))    return;
   if (!ctx.waha_id)                   return;
 
@@ -110,4 +116,86 @@ async function handleWebhook(body: Record<string, unknown>) {
   });
 
   if (error) throw error;
+}
+
+const NOTIFY_THROTTLE_MS = 60 * 60 * 1000; // 1 aviso por hora por conversa
+
+/**
+ * Conversa etiquetada 'equipe' recebeu mensagem nova do cliente.
+ * 1. Registra/atualiza o episódio em reengage_state
+ * 2. Avisa o responsável (vendedora da etiqueta ou suporte da loja) — 1x/hora
+ * O reengajamento da IA (após 3h sem resposta humana) roda no reengage-check.
+ */
+async function handleTeamReturn(
+  ctx: ConversationContext,
+  inboxId: number,
+  firstAttach: Record<string, unknown>,
+) {
+  try {
+    const store = await loadStoreByInboxId(supabase, inboxId);
+    if (!store) return;
+
+    // Resume mídia pra exibição/replay
+    let msg = ctx.mensagem;
+    const fileType = ctx.mensagem_de_audio;
+    if (!msg && fileType.startsWith('audio')) msg = `__AUDIO__:${String(firstAttach.data_url ?? '')}`;
+    if (!msg && fileType.startsWith('image')) msg = `__IMAGE:image/jpeg__:${String(firstAttach.data_url ?? '')}`;
+    if (!msg.trim()) return;
+
+    const { data: st } = await supabase
+      .from('reengage_state')
+      .select('*')
+      .eq('account_id', ctx.id_conta)
+      .eq('conversation_id', ctx.id_conversa)
+      .maybeSingle();
+
+    const now = Date.now();
+    const episodioFechado = st && (st.resolved_at || st.taken_over_at);
+    const row = {
+      account_id:          ctx.id_conta,
+      conversation_id:     ctx.id_conversa,
+      store_id:            store.id,
+      phone:               ctx.telefone || ctx.waha_id,
+      waha_id:             ctx.waha_id,
+      last_msg:            msg,
+      ctx:                 ctx as unknown as Record<string, unknown>,
+      // Episódio novo (nunca visto ou o anterior já foi fechado): reinicia o relógio
+      first_unanswered_at: (!st || episodioFechado) ? new Date(now).toISOString() : st.first_unanswered_at,
+      taken_over_at:       (!st || episodioFechado) ? null : st.taken_over_at,
+      resolved_at:         null,
+      last_notified_at:    st?.last_notified_at ?? null,
+    };
+
+    const deveNotificar =
+      !row.last_notified_at ||
+      now - new Date(row.last_notified_at as string).getTime() > NOTIFY_THROTTLE_MS;
+
+    if (deveNotificar) {
+      // Vendedora da etiqueta > suporte da loja
+      const vendors = await loadVendors(supabase, store.id);
+      const vendor = vendors.find(v => ctx.etiquetas.includes(v.label) && v.summary_chat);
+      const target = vendor?.summary_chat ?? store.support_notify_chat;
+      if (target) {
+        const preview = msg.startsWith('__AUDIO__') ? '[áudio]'
+                      : msg.startsWith('__IMAGE') ? '[imagem]'
+                      : msg.slice(0, 120);
+        const nome = ctx.nome ? `${ctx.nome} — ` : '';
+        await sendText(
+          target,
+          `🔁 *Cliente voltou a chamar no número principal*\n\n${nome}${ctx.telefone || ctx.waha_id}\n"${preview}"\n\n_Responda por lá — se ninguém responder em 3h, a IA reassume._`,
+          store.bot_session,
+          store.waha_url,
+        );
+        row.last_notified_at = new Date(now).toISOString();
+      }
+    }
+
+    const { error } = await supabase
+      .from('reengage_state')
+      .upsert(row, { onConflict: 'account_id,conversation_id' });
+    if (error) console.error('reengage upsert:', error);
+  } catch (err) {
+    // Nunca propaga — o webhook precisa responder 200 sempre
+    console.error('handleTeamReturn:', err);
+  }
 }
