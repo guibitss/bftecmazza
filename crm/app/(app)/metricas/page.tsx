@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
 import { Megaphone, TrendingUp } from 'lucide-react';
 import { PeriodFilter } from '@/components/period-filter';
+import { VendorFilter, type VendorOption } from '@/components/vendor-filter';
+import { VendorDetail } from './vendor-detail';
 import { resolvePeriod, type Period } from '@/lib/period';
 
 interface CampaignRow {
@@ -23,53 +25,87 @@ function brl(v: number | null): string {
 }
 
 export default async function MetricasPage({ searchParams }: {
-  searchParams: Promise<{ p?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ p?: string; from?: string; to?: string; v?: string }>;
 }) {
   await getCurrentUser();   // exige login; visível a todos os papéis
-  const period = resolvePeriod(await searchParams);
+  const sp = await searchParams;
+  const period = resolvePeriod(sp);
+  const vendorId = sp.v ? Number(sp.v) : null;
+
+  const admin = createAdminClient();
+  const { data: vendorRows } = await admin
+    .from('vendors')
+    .select('id, name, stores:store_id(slug)')
+    .eq('active', true)
+    .order('store_id')
+    .order('queue_order');
+  const vendors: VendorOption[] = (vendorRows ?? []).map((v: Record<string, unknown>) => {
+    const storeRel = v.stores as { slug?: string } | { slug: string }[] | null;
+    const slug = Array.isArray(storeRel) ? storeRel[0]?.slug ?? '' : storeRel?.slug ?? '';
+    return { id: v.id as number, name: v.name as string, storeSlug: slug };
+  });
+  const vendorName = vendorId
+    ? vendors.find(v => v.id === vendorId)?.name ?? null
+    : null;
 
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-950">
-      <div className="hairline-b h-16 px-8 flex items-center justify-between">
+      <div className="hairline-b h-16 px-8 flex items-center justify-between gap-3">
         <span className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">
           Métricas
         </span>
-        <PeriodFilter />
+        <div className="flex flex-wrap items-center gap-3">
+          <VendorFilter vendors={vendors} />
+          <PeriodFilter />
+        </div>
       </div>
 
       <div className="px-8 py-10 max-w-5xl mx-auto">
         <h1 className="text-[32px] font-semibold tracking-[-0.03em] animate-slide-up">
-          Métricas
+          {vendorName ? vendorName.charAt(0).toUpperCase() + vendorName.slice(1) : 'Métricas'}
         </h1>
         <p className="mt-2 text-[14px] text-fg-muted">
-          Campanhas de anúncio e desempenho comercial — {period.label}.
+          {vendorName
+            ? `Desempenho individual — ${period.label}.`
+            : `Campanhas de anúncio e desempenho comercial — ${period.label}.`}
         </p>
 
-        {/* QUALIDADE DE ATENDIMENTO · agente IA */}
-        <div className="mt-10">
-          <div className="flex items-center gap-4 mb-5">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
-              <TrendingUp size={12} /> Vendedores · Qualidade de atendimento
-            </div>
-            <div className="flex-1 h-px bg-border" />
+        {vendorId ? (
+          /* VISÃO INDIVIDUAL — tiles + gráficos */
+          <div className="mt-10">
+            <Suspense key={`vd-${vendorId}-${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
+              <VendorDetail vendorId={vendorId} period={period} />
+            </Suspense>
           </div>
-          <Suspense key={`vq-${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
-            <VendorQualityTable period={period} />
-          </Suspense>
-        </div>
+        ) : (
+          <>
+            {/* QUALIDADE DE ATENDIMENTO · agente IA */}
+            <div className="mt-10">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
+                  <TrendingUp size={12} /> Vendedores · Qualidade de atendimento
+                </div>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+              <Suspense key={`vq-${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
+                <VendorQualityTable period={period} />
+              </Suspense>
+            </div>
 
-        {/* CAMPANHAS · META ADS */}
-        <div className="mt-12">
-          <div className="flex items-center gap-4 mb-5">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
-              <Megaphone size={12} /> Campanhas · Meta Ads
+            {/* CAMPANHAS · META ADS */}
+            <div className="mt-12">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
+                  <Megaphone size={12} /> Campanhas · Meta Ads
+                </div>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+              <Suspense key={`${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
+                <CampaignTable period={period} />
+              </Suspense>
             </div>
-            <div className="flex-1 h-px bg-border" />
-          </div>
-          <Suspense key={`${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
-            <CampaignTable period={period} />
-          </Suspense>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
