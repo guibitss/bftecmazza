@@ -119,9 +119,11 @@ export async function VendorDetail({ vendorId, period }: { vendorId: number; per
 
   return (
     <div className="viz-root space-y-6">
+      {/* Paleta monocromática (padrão da marca): vendedora = tinta cheia,
+          time = cinza recuado — identidade por tom + rótulo direto, nunca só cor */}
       <style>{`
-        .viz-root { --s1: #2a78d6; --s2: #1baf7a; --ink: #0b0b0b; --ink-2: #52514e; --ink-mute: #898781; --grid: #e1e0d9; }
-        .dark .viz-root { --s1: #3987e5; --s2: #199e70; --ink: #ffffff; --ink-2: #c3c2b7; --grid: #2c2c2a; }
+        .viz-root { --s1: #18181b; --s2: #a1a1aa; --ink: #0b0b0b; --ink-2: #52514e; --ink-mute: #898781; --grid: #e4e4e7; }
+        .dark .viz-root { --s1: #fafafa; --s2: #52525b; --ink: #ffffff; --ink-2: #c3c2b7; --grid: #27272a; }
       `}</style>
 
       {/* STAT TILES */}
@@ -131,7 +133,7 @@ export async function VendorDetail({ vendorId, period }: { vendorId: number; per
               hint={teamFech != null ? `média do time: ${teamFech}` : ''} />
         <Tile label="Follow-up" value={me.followup_oportunidades > 0 ? `${me.followup_feitos}/${me.followup_oportunidades}` : '—'}
               hint="feitos / oportunidades" />
-        <Tile label="Vendidos" value={String(me.vendidos)} hint={`${me.esfriados} esfriaram`} good />
+        <Tile label="Vendidos" value={String(me.vendidos)} hint={`${me.esfriados} esfriaram`} />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -199,11 +201,11 @@ export async function VendorDetail({ vendorId, period }: { vendorId: number; per
   );
 }
 
-function Tile({ label, value, hint, good }: { label: string; value: string; hint?: string; good?: boolean }) {
+function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <Card className="p-5">
       <div className="text-[11px] uppercase tracking-[0.12em] text-fg-subtle">{label}</div>
-      <div className={`mt-2 text-[30px] font-semibold tracking-[-0.03em] leading-none ${good ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
+      <div className="mt-2 text-[30px] font-semibold tracking-[-0.03em] leading-none">
         {value}
       </div>
       {hint && <div className="mt-1.5 text-[11.5px] text-fg-muted">{hint}</div>}
