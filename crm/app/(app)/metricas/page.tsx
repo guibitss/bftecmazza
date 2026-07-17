@@ -45,21 +45,8 @@ export default async function MetricasPage({ searchParams }: {
           Campanhas de anúncio e desempenho comercial — {period.label}.
         </p>
 
-        {/* CAMPANHAS · META ADS */}
-        <div className="mt-10">
-          <div className="flex items-center gap-4 mb-5">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
-              <Megaphone size={12} /> Campanhas · Meta Ads
-            </div>
-            <div className="flex-1 h-px bg-border" />
-          </div>
-          <Suspense key={`${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
-            <CampaignTable period={period} />
-          </Suspense>
-        </div>
-
         {/* QUALIDADE DE ATENDIMENTO · agente IA */}
-        <div className="mt-12">
+        <div className="mt-10">
           <div className="flex items-center gap-4 mb-5">
             <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
               <TrendingUp size={12} /> Vendedores · Qualidade de atendimento
@@ -68,6 +55,19 @@ export default async function MetricasPage({ searchParams }: {
           </div>
           <Suspense key={`vq-${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
             <VendorQualityTable period={period} />
+          </Suspense>
+        </div>
+
+        {/* CAMPANHAS · META ADS */}
+        <div className="mt-12">
+          <div className="flex items-center gap-4 mb-5">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
+              <Megaphone size={12} /> Campanhas · Meta Ads
+            </div>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+          <Suspense key={`${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
+            <CampaignTable period={period} />
           </Suspense>
         </div>
       </div>
