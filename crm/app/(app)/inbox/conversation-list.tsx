@@ -49,7 +49,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
         .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url')
         .eq('inbox_id', inbox.inboxId)
         .order('last_message_at', { ascending: false })
-        .limit(100);
+        .limit(1500);
       if (!cancelled) setConvs((data ?? []) as ConvRow[]);
     })();
     return () => { cancelled = true; };

@@ -5,6 +5,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
 import { ArrowUpRight, MessagesSquare, UserCheck, Sparkles, ShieldUser } from 'lucide-react';
 import { VendorMetricsTable, VendorMetricsHero, type VendorMetric } from '@/components/vendor-metrics-table';
+import { PeriodFilter } from '@/components/period-filter';
+import { resolvePeriod, type Period } from '@/lib/period';
 
 type Trend = 'up' | 'down' | 'flat';
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
@@ -25,9 +27,12 @@ async function loadStoreVendorMetrics(storeId: number): Promise<VendorMetric[]> 
   return rows;
 }
 
-export default async function Dashboard() {
+export default async function Dashboard({ searchParams }: {
+  searchParams: Promise<{ p?: string; from?: string; to?: string }>;
+}) {
   const supabase = await createClient();
   const user = await getCurrentUser();
+  const period = resolvePeriod(await searchParams);
   const firstName = user.name.split(' ')[0];
 
   // ──── Métricas gerais (cards do topo) ────
@@ -116,8 +121,14 @@ export default async function Dashboard() {
         </div>
 
         {/* MÉTRICAS (streaming: a página abre na hora, tabelas chegam depois) */}
-        <Suspense fallback={<MetricsSkeleton />}>
-          <MetricsSection user={user} stores={stores.data ?? []} />
+        <div className="mb-5 flex items-center justify-between gap-4 flex-wrap">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">
+            Tempo de resposta · {period.label}
+          </div>
+          <PeriodFilter />
+        </div>
+        <Suspense key={`${period.from.getTime()}-${period.to.getTime()}`} fallback={<MetricsSkeleton />}>
+          <MetricsSection user={user} stores={stores.data ?? []} period={period} />
         </Suspense>
       </div>
     </div>
@@ -140,9 +151,10 @@ function MetricsSkeleton() {
 // ──── Métricas de vendedores (async → Suspense) ────
 // Transparência total: TODOS veem o tempo de resposta de todas as lojas.
 // Vendedor mantém o card pessoal detalhado no topo.
-async function MetricsSection({ user, stores }: {
+async function MetricsSection({ user, stores, period }: {
   user: CurrentUser;
   stores: { id: number; slug: string }[];
+  period: Period;
 }) {
   const adminClient = createAdminClient();
 
@@ -158,7 +170,14 @@ async function MetricsSection({ user, stores }: {
     storeList.map(async s => ({
       storeId: s.id,
       storeSlug: s.slug,
-      rows: await loadStoreVendorMetrics(s.id),
+      // Padrão (30d) usa o cache; período custom consulta a função range
+      rows: period.isDefault30
+        ? await loadStoreVendorMetrics(s.id)
+        : ((await adminClient.rpc('store_vendor_metrics_range', {
+            p_store_id: s.id,
+            p_from: period.from.toISOString(),
+            p_to: period.to.toISOString(),
+          })).data ?? []) as VendorMetric[],
     })),
   );
 
@@ -205,7 +224,7 @@ async function MetricsSection({ user, stores }: {
           </div>
           <VendorMetricsTable
             rows={m.rows}
-            subtitle="Últimos 30 dias · tempo entre msg do cliente e 1ª resposta do vendedor"
+            subtitle={`${period.label} · tempo entre msg do cliente e 1ª resposta do vendedor`}
           />
         </div>
       ))}

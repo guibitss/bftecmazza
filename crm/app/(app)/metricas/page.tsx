@@ -1,10 +1,10 @@
 import { Suspense } from 'react';
-import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
 import { Megaphone, TrendingUp } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { PeriodFilter } from '@/components/period-filter';
+import { resolvePeriod, type Period } from '@/lib/period';
 
 interface CampaignRow {
   campaign_id: string;
@@ -17,22 +17,16 @@ interface CampaignRow {
   custo_venda: number | null;
 }
 
-const PERIODS = [
-  { d: 7,  label: '7 dias' },
-  { d: 30, label: '30 dias' },
-];
-
 function brl(v: number | null): string {
   if (v == null) return '—';
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 export default async function MetricasPage({ searchParams }: {
-  searchParams: Promise<{ d?: string }>;
+  searchParams: Promise<{ p?: string; from?: string; to?: string }>;
 }) {
   await getCurrentUser();   // exige login; visível a todos os papéis
-  const sp = await searchParams;
-  const days = sp.d === '7' ? 7 : 30;
+  const period = resolvePeriod(await searchParams);
 
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-950">
@@ -40,22 +34,7 @@ export default async function MetricasPage({ searchParams }: {
         <span className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">
           Métricas
         </span>
-        <div className="flex items-center gap-1">
-          {PERIODS.map(p => (
-            <Link
-              key={p.d}
-              href={`/metricas?d=${p.d}`}
-              className={cn(
-                'px-3 py-1 rounded-full text-[12px] font-medium border transition-colors',
-                days === p.d
-                  ? 'bg-ink-950 dark:bg-white text-white dark:text-ink-950 border-transparent'
-                  : 'border-border text-fg-muted hover:text-fg',
-              )}
-            >
-              {p.label}
-            </Link>
-          ))}
-        </div>
+        <PeriodFilter />
       </div>
 
       <div className="px-8 py-10 max-w-5xl mx-auto">
@@ -63,7 +42,7 @@ export default async function MetricasPage({ searchParams }: {
           Métricas
         </h1>
         <p className="mt-2 text-[14px] text-fg-muted">
-          Campanhas de anúncio e desempenho comercial — últimos {days} dias.
+          Campanhas de anúncio e desempenho comercial — {period.label}.
         </p>
 
         {/* CAMPANHAS · META ADS */}
@@ -74,8 +53,8 @@ export default async function MetricasPage({ searchParams }: {
             </div>
             <div className="flex-1 h-px bg-border" />
           </div>
-          <Suspense fallback={<TableSkeleton />}>
-            <CampaignTable days={days} />
+          <Suspense key={`${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
+            <CampaignTable period={period} />
           </Suspense>
         </div>
 
@@ -96,9 +75,12 @@ export default async function MetricasPage({ searchParams }: {
   );
 }
 
-async function CampaignTable({ days }: { days: number }) {
+async function CampaignTable({ period }: { period: Period }) {
   const admin = createAdminClient();
-  const { data } = await admin.rpc('campaign_metrics', { p_days: days });
+  const { data } = await admin.rpc('campaign_metrics_range', {
+    p_from: period.from.toISOString(),
+    p_to: period.to.toISOString(),
+  });
   const rows = (data ?? []) as CampaignRow[];
 
   if (rows.length === 0) {
