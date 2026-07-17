@@ -22,3 +22,6 @@ verify_jwt = false
 
 [functions.reengage-check]
 verify_jwt = false
+
+[functions.meta-ads-sync]
+verify_jwt = false
