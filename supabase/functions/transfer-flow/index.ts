@@ -131,37 +131,8 @@ async function handleTransfer(input: TransferFlowInput) {
     await sendText(destId, greeting, vendor.waha_session, store.waha_url);
     audit(src, storeId, tel, 'greeting_ok', vendor.name, { ms: Date.now() - t0, session: vendor.waha_session });
   } catch (err) {
-    const errStr = String(err);
     console.error(`${tag} greeting FAILED:`, err);
-    audit(src, storeId, tel, 'greeting_failed', vendor.name, { error: errStr, session: vendor.waha_session });
-
-    // Fallback anti-463: o WhatsApp bloqueia número novo/frio de iniciar
-    // conversa (erro 463 = ReachoutTimelocked). Nesse caso o BOT — número
-    // da loja, que o cliente acabou de conversar — apresenta a vendedora e
-    // pede pro CLIENTE mandar a 1ª mensagem (o que libera o vendedor daí em
-    // diante). Sem isso o cliente ficaria sem nenhum retorno.
-    if (errStr.includes('463') || errStr.includes('no LID found')) {
-      const vendorPhone = (vendor.summary_chat ?? '').replace(/@.*/, '');
-      if (vendorPhone) {
-        const nomeVend = vendor.name.charAt(0).toUpperCase() + vendor.name.slice(1);
-        const fmt = vendorPhone.replace(/^55(\d{2})(\d{4,5})(\d{4})$/, '+55 ($1) $2-$3');
-        const bridge =
-`Você será atendido(a) pela nossa vendedora *${nomeVend}*! 😊
-
-Para agilizar, chame ela agora no número abaixo (é só tocar e mandar um "oi"):
-${fmt}
-
-Ela já está com o seu contexto e vai te responder rapidinho.`;
-        try {
-          const t1 = Date.now();
-          await sendText(destId, bridge, store.bot_session, store.waha_url);
-          audit(src, storeId, tel, 'greeting_bridge_ok', vendor.name, { ms: Date.now() - t1, phone: vendorPhone });
-        } catch (bridgeErr) {
-          console.error(`${tag} bridge FAILED:`, bridgeErr);
-          audit(src, storeId, tel, 'greeting_bridge_failed', vendor.name, { error: String(bridgeErr) });
-        }
-      }
-    }
+    audit(src, storeId, tel, 'greeting_failed', vendor.name, { error: String(err), session: vendor.waha_session });
   }
 
   // 4. Resumo ao vendedor
