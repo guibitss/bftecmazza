@@ -64,6 +64,20 @@ async function handleWebhook(body: Record<string, unknown>) {
 
   // Filtros base
   if (ctx.tipo !== 'incoming')        return;
+  if (!ctx.waha_id)                   return;
+
+  // Carrega loja pelo inbox_id — ignora webhooks de inboxes não configuradas
+  const store = await loadStoreByInboxId(supabase, inboxId);
+  if (!store) return;
+
+  // Número da própria equipe (vendedor/suporte) escrevendo pro número
+  // principal — eles usam a conversa como bloco de notas. A IA não atende
+  // e o fluxo de reengajamento também não dispara.
+  if (await isInternalNumber(store.id, ctx.telefone, ctx.waha_id)) {
+    console.log(`interno ignorado: ${ctx.telefone || ctx.waha_id}`);
+    return;
+  }
+
   if (ctx.etiquetas.includes('equipe')) {
     // Cliente já encaminhado pra equipe voltou a chamar: avisa o responsável
     // e registra pro reengajamento da IA (reengage-check) se ninguém responder
@@ -71,11 +85,6 @@ async function handleWebhook(body: Record<string, unknown>) {
     return;
   }
   if (ctx.mensagem.includes('👥'))    return;
-  if (!ctx.waha_id)                   return;
-
-  // Carrega loja pelo inbox_id — ignora webhooks de inboxes não configuradas
-  const store = await loadStoreByInboxId(supabase, inboxId);
-  if (!store) return;
 
   // Filtro de whitelist para modo teste
   if (TEST_WHITELIST) {
@@ -116,6 +125,62 @@ async function handleWebhook(body: Record<string, unknown>) {
   });
 
   if (error) throw error;
+}
+
+// ── Números internos (vendedores + suporte) ───────────────────────────
+// Vendedores usam a conversa com o número principal como bloco de notas.
+// A IA não pode tentar atendê-los. Lido do banco (os números mudam) com
+// cache curto, e comparado tolerando o nono dígito brasileiro — o cadastro
+// e a mensagem chegam em formatos diferentes (554498840973 × 5544998840973).
+const INTERNAL_TTL_MS = 5 * 60 * 1000;
+const internalCache = new Map<number, { nums: Set<string>; at: number }>();
+
+function digitsOf(s: string): string {
+  return (s ?? '').replace(/\D/g, '');
+}
+
+/** Formas equivalentes de um número BR (com e sem o nono dígito). */
+function phoneVariants(raw: string): string[] {
+  const d = digitsOf(raw);
+  if (!d) return [];
+  const out = new Set<string>([d]);
+  const m13 = d.match(/^(55)(\d{2})9(\d{8})$/);
+  if (m13) out.add(`${m13[1]}${m13[2]}${m13[3]}`);
+  const m12 = d.match(/^(55)(\d{2})(\d{8})$/);
+  if (m12 && !m12[3].startsWith('9')) out.add(`${m12[1]}${m12[2]}9${m12[3]}`);
+  return [...out];
+}
+
+async function isInternalNumber(
+  storeId: number,
+  telefone: string,
+  wahaId: string,
+): Promise<boolean> {
+  try {
+    let entry = internalCache.get(storeId);
+    if (!entry || Date.now() - entry.at > INTERNAL_TTL_MS) {
+      const [{ data: vendors }, { data: store }] = await Promise.all([
+        supabase.from('vendors').select('summary_chat').eq('store_id', storeId),
+        supabase.from('stores').select('support_notify_chat').eq('id', storeId).maybeSingle(),
+      ]);
+      const nums = new Set<string>();
+      for (const v of vendors ?? []) {
+        for (const p of phoneVariants(v.summary_chat as string)) nums.add(p);
+      }
+      for (const p of phoneVariants(store?.support_notify_chat as string ?? '')) nums.add(p);
+      entry = { nums, at: Date.now() };
+      internalCache.set(storeId, entry);
+    }
+    if (entry.nums.size === 0) return false;
+    for (const p of [...phoneVariants(telefone), ...phoneVariants(wahaId)]) {
+      if (entry.nums.has(p)) return true;
+    }
+    return false;
+  } catch (err) {
+    // Nunca bloqueia o atendimento por falha na checagem
+    console.error('isInternalNumber:', err);
+    return false;
+  }
 }
 
 const NOTIFY_THROTTLE_MS = 60 * 60 * 1000; // 1 aviso por hora por conversa
