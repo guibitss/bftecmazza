@@ -29,7 +29,7 @@ export async function Destaques({ period }: { period: Period }) {
   const from = period.from.toISOString();
   const to = period.to.toISOString();
 
-  const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }] = await Promise.all([
+  const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }] = await Promise.all([
     admin.from('conversation_analysis')
       .select('conversation_id, nota_geral, pontos_fortes, vendor_id, desfecho')
       .gte('last_message_at', from).lt('last_message_at', to)
@@ -39,6 +39,7 @@ export async function Destaques({ period }: { period: Period }) {
     admin.from('vendors').select('id, name'),
     admin.rpc('analysis_perdas', { p_from: from, p_to: to }),
     admin.rpc('analysis_objecoes', { p_from: from, p_to: to }),
+    admin.rpc('analysis_valor_risco', { p_from: from, p_to: to }),
   ]);
 
   const nameById = new Map((vendors ?? []).map((v: { id: number; name: string }) => [v.id, v.name]));
@@ -46,6 +47,9 @@ export async function Destaques({ period }: { period: Period }) {
   const perda = (Array.isArray(perdas) ? perdas[0] : perdas) as
     { esfriados: number; followup_perdidos: number; negativas_secas: number } | undefined;
   const objRows = (objs ?? []) as { tipo: string; total: number; avaliaveis: number; quebradas: number; indeterminadas: number }[];
+  const riscoRows = (risco ?? []) as { slug: string; ticket_medio: number; followup_perdidos: number; conversao_pct: number; valor_risco: number }[];
+  const valorTotal = riscoRows.reduce((a, r) => a + Number(r.valor_risco ?? 0), 0);
+  const brl0 = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
   // Trecho real da melhor conversa (últimas trocas)
   let trecho: { direction: string; body: string | null; kind: string }[] = [];
@@ -117,9 +121,33 @@ export async function Destaques({ period }: { period: Period }) {
             <Metric n={perda?.followup_perdidos ?? 0} label="follow-ups não feitos" />
             <Metric n={perda?.negativas_secas ?? 0} label="negativas sem alternativa" />
           </div>
-          <p className="mt-3 text-[11.5px] text-fg-subtle leading-relaxed">
-            Cada follow-up não feito é um cliente que sinalizou interesse e não foi retomado.
-          </p>
+          {valorTotal > 0 && (
+            <div className="mt-4 pt-3 hairline-t">
+              <div className="text-[11px] uppercase tracking-[0.12em] text-fg-subtle">
+                Valor em risco no período
+              </div>
+              <div className="mt-1.5 text-[30px] font-semibold tracking-[-0.03em] leading-none num">
+                {brl0(valorTotal)}
+              </div>
+              <div className="mt-2.5 space-y-1">
+                {riscoRows.map(r => (
+                  <div key={r.slug} className="flex items-baseline justify-between text-[11.5px]">
+                    <span className="text-fg-muted uppercase tracking-wider">{r.slug}</span>
+                    <span className="num text-fg">
+                      {brl0(Number(r.valor_risco))}
+                      <span className="ml-2 text-fg-subtle">
+                        {r.followup_perdidos} × {brl0(Number(r.ticket_medio))} × {r.conversao_pct}%
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2.5 text-[11px] text-fg-subtle leading-relaxed">
+                Cálculo conservador: follow-ups não feitos × ticket médio da loja ×
+                taxa de conversão observada nela. Não assume que todo lead viraria venda.
+              </p>
+            </div>
+          )}
         </Card>
 
         {/* OBJEÇÕES */}
