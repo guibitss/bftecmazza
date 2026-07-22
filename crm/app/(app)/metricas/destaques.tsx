@@ -45,7 +45,7 @@ export async function Destaques({ period }: { period: Period }) {
   const top = (best ?? [])[0] as BestRow | undefined;
   const perda = (Array.isArray(perdas) ? perdas[0] : perdas) as
     { esfriados: number; followup_perdidos: number; negativas_secas: number } | undefined;
-  const objRows = (objs ?? []) as { tipo: string; total: number; quebradas: number }[];
+  const objRows = (objs ?? []) as { tipo: string; total: number; avaliaveis: number; quebradas: number; indeterminadas: number }[];
 
   // Trecho real da melhor conversa (últimas trocas)
   let trecho: { direction: string; body: string | null; kind: string }[] = [];
@@ -132,10 +132,11 @@ export async function Destaques({ period }: { period: Period }) {
           ) : (
             <div className="mt-3 space-y-2.5">
               {objRows.map(o => {
-                const pct = o.total > 0 ? Math.round(100 * o.quebradas / o.total) : 0;
+                const pct = o.avaliaveis > 0 ? Math.round(100 * o.quebradas / o.avaliaveis) : null;
                 const max = Math.max(...objRows.map(r => Number(r.total)));
                 return (
-                  <div key={o.tipo} className="flex items-center gap-3" title={`${o.quebradas} de ${o.total} quebradas`}>
+                  <div key={o.tipo} className="flex items-center gap-3"
+                    title={`${o.quebradas} de ${o.avaliaveis} contornadas · ${o.indeterminadas} por áudio (não avaliável)`}>
                     <span className="w-24 shrink-0 text-[12px] text-fg-muted text-right">
                       {OBJ_LABEL[o.tipo] ?? o.tipo}
                     </span>
@@ -143,14 +144,18 @@ export async function Destaques({ period }: { period: Period }) {
                       <div className="absolute inset-y-0 left-0 rounded-r-[3px] rounded-l-[2px] bg-zinc-900 dark:bg-zinc-100"
                         style={{ width: `${max > 0 ? Math.max(3, (Number(o.total) / max) * 100) : 0}%` }} />
                     </div>
-                    <span className="w-16 shrink-0 text-[11.5px] num text-fg-muted text-right">
-                      {o.total} · {pct}% ok
+                    <span className="w-20 shrink-0 text-[11.5px] num text-fg-muted text-right">
+                      {o.total} · {pct != null ? `${pct}%` : '—'}
                     </span>
                   </div>
                 );
               })}
             </div>
           )}
+          <p className="mt-3 text-[11px] text-fg-subtle leading-relaxed">
+            % = objeções contornadas entre as avaliáveis. Objeção respondida por
+            áudio não entra na conta (o agente não escuta o áudio).
+          </p>
         </Card>
       </div>
     </div>

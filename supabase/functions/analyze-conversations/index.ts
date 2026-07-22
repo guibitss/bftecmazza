@@ -39,7 +39,7 @@ Analise a transcrição de UMA conversa entre VENDEDORA e CLIENTE e responda SOM
   "qualificou_antes_preco": <bool|null — antes do preço, perguntou modelo/uso/troca/estado. null se preço não foi discutido>,
   "desfecho": <"vendido"|"agendou"|"negociando"|"em_andamento"|"esfriou"|"perdido"|"indefinido">,
   "nota_geral": <int 0-10 — qualidade global do atendimento, ver régua>,
-  "objecoes": [{"tipo":"preco|prazo|concorrencia|confianca|estoque|outro","quebrada":<bool>,"trecho":"<citação curta>"}],
+  "objecoes": [{"tipo":"preco|prazo|concorrencia|confianca|estoque|outro","quebrada":<true|false|null>,"trecho":"<citação curta>"}],
   "erros": [{"tipo":"preco_errado|resposta_evasiva|tom_inadequado|informacao_incompleta|demora_critica","trecho":"<citação>"}],
   "pontos_fortes": ["<max 2, específicos>"],
   "sugestoes": ["<max 2, práticas, específicas DESTA conversa>"],
@@ -63,6 +63,7 @@ OBJEÇÕES — qualquer resistência ou hesitação do CLIENTE que precise ser c
 - estoque: quer modelo/cor/capacidade que não há
 - outro
 "quebrada": true se a VENDEDORA dissolveu a resistência (argumento de valor, alternativa concreta, prova, condição melhor); false se ignorou, mudou de assunto ou apenas repetiu a informação.
+IMPORTANTE — use null (indeterminado) quando a resposta da VENDEDORA à objeção veio em [áudio], [imagem] ou [vídeo]: você não tem acesso ao conteúdo e NÃO pode assumir que ela falhou. Marcar false nesse caso é erro grave de avaliação.
 
 ERROS — procure ativamente, eles existem. Exemplos reais desta operação:
 - preco_errado: valor com casas/zeros errados ("R$ 7.999,000"), preço divergente do mesmo produto na mesma conversa
