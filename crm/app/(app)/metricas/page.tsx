@@ -2,10 +2,11 @@ import { Suspense } from 'react';
 import { getCurrentUser } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
-import { Megaphone, TrendingUp } from 'lucide-react';
+import { Megaphone, TrendingUp, Sparkles } from 'lucide-react';
 import { PeriodFilter } from '@/components/period-filter';
 import { VendorFilter, type VendorOption } from '@/components/vendor-filter';
 import { VendorDetail } from './vendor-detail';
+import { Destaques } from './destaques';
 import { resolvePeriod, type Period } from '@/lib/period';
 
 interface CampaignRow {
@@ -79,8 +80,21 @@ export default async function MetricasPage({ searchParams }: {
           </div>
         ) : (
           <>
-            {/* QUALIDADE DE ATENDIMENTO · agente IA */}
+            {/* DESTAQUES · agente IA */}
             <div className="mt-10">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
+                  <Sparkles size={12} /> Destaques do período
+                </div>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+              <Suspense key={`dq-${period.from.getTime()}-${period.to.getTime()}`} fallback={<TableSkeleton />}>
+                <Destaques period={period} />
+              </Suspense>
+            </div>
+
+            {/* QUALIDADE DE ATENDIMENTO · agente IA */}
+            <div className="mt-12">
               <div className="flex items-center gap-4 mb-5">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle flex items-center gap-2">
                   <TrendingUp size={12} /> Vendedores · Qualidade de atendimento
@@ -207,6 +221,10 @@ interface VendorQualityRow {
   esfriados: number;
   prospeccao_ativa: number;
   audio_pct: number | null;
+  nota_media: number | null;
+  objecoes_total: number;
+  objecoes_quebradas: number;
+  erros_total: number;
 }
 
 function cap(s: string) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -240,12 +258,14 @@ async function VendorQualityTable({ period }: { period: Period }) {
             <tr className="bg-surface-muted/60 text-[10.5px] uppercase tracking-[0.12em] text-fg-subtle">
               <th className="text-left  px-4 py-3 font-medium">Vendedora</th>
               <th className="text-right px-3 py-3 font-medium" title="Conversas analisadas pelo agente no período">Convs</th>
+              <th className="text-right px-3 py-3 font-medium" title="Nota média do atendimento (0-10) pelo agente">Nota</th>
               <th className="text-right px-3 py-3 font-medium" title="Média de perguntas de fechamento por conversa">Fechamento</th>
               <th className="text-right px-3 py-3 font-medium" title="Follow-ups feitos / clientes que disseram 'depois'">Follow-up</th>
               <th className="text-right px-3 py-3 font-medium" title="Falta de estoque: com alternativa × negativa seca">Ponte estoque</th>
               <th className="text-right px-3 py-3 font-medium" title="% de conversas com parcelamento oferecido sem pedir">Parc. proativo</th>
               <th className="text-right px-3 py-3 font-medium" title="% de conversas em que qualificou antes de dar preço">Qualifica</th>
               <th className="text-right px-3 py-3 font-medium" title="Conversas iniciadas pela vendedora (prospecção)">Prospecção</th>
+              <th className="text-right px-3 py-3 font-medium" title="Objeções quebradas / total detectadas">Objeções</th>
               <th className="text-right px-3 py-3 font-medium" title="% de áudio nas mensagens da vendedora">Áudio</th>
               <th className="text-right px-3 py-3 font-medium" title="Desfecho estimado pelo agente">Vendidos</th>
             </tr>
@@ -258,6 +278,7 @@ async function VendorQualityTable({ period }: { period: Period }) {
                   <span className="ml-2 text-[10px] uppercase tracking-wider text-fg-subtle">{slug.get(r.store_id) ?? ''}</span>
                 </td>
                 <td className="px-3 py-3 text-right num">{r.convs_analisadas}</td>
+                <td className="px-3 py-3 text-right num font-semibold">{r.nota_media != null ? r.nota_media : '—'}</td>
                 <td className="px-3 py-3 text-right num">
                   {r.fechamento_por_conv != null ? r.fechamento_por_conv : '—'}
                   {r.convs_sem_fechamento > 0 && (
@@ -283,6 +304,9 @@ async function VendorQualityTable({ period }: { period: Period }) {
                 <td className="px-3 py-3 text-right num">{pct(r.parcelamento_proativo_pct)}</td>
                 <td className="px-3 py-3 text-right num">{pct(r.qualificacao_pct)}</td>
                 <td className="px-3 py-3 text-right num">{r.prospeccao_ativa}</td>
+                <td className="px-3 py-3 text-right num">
+                  {r.objecoes_total > 0 ? `${r.objecoes_quebradas}/${r.objecoes_total}` : '—'}
+                </td>
                 <td className="px-3 py-3 text-right num">{pct(r.audio_pct)}</td>
                 <td className="px-3 py-3 text-right num font-semibold text-emerald-600 dark:text-emerald-400">{r.vendidos}</td>
               </tr>
