@@ -20,7 +20,7 @@ const supabase = createClient(
 );
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')!;
 const MODEL = 'gpt-4o-mini';
-const PROMPT_VERSION = 2;
+const PROMPT_VERSION = 3;
 
 const DEFAULT_LIMIT   = 120;
 const CONCURRENCY     = 6;
@@ -31,6 +31,7 @@ const SYSTEM_PROMPT = `Você é um auditor especialista em vendas de varejo Appl
 Analise a transcrição de UMA conversa entre VENDEDORA e CLIENTE e responda SOMENTE com JSON válido:
 
 {
+  "eh_atendimento": <bool — ver PRIMEIRO PASSO>,
   "fechamento_count": <int — nº de perguntas de fechamento da VENDEDORA. Fechamento = pergunta que empurra a decisão ("posso separar?", "quer vir buscar hoje?", "fechamos assim?"). Responder preço e silenciar NÃO conta>,
   "followup_oportunidade": <bool — o CLIENTE sinalizou adiamento ("vou pensar", "te falo depois", "mês que vem")>,
   "followup_feito": <bool — DEPOIS do adiamento, a VENDEDORA retomou por iniciativa própria>,
@@ -45,6 +46,9 @@ Analise a transcrição de UMA conversa entre VENDEDORA e CLIENTE e responda SOM
   "sugestoes": ["<max 2, práticas, específicas DESTA conversa>"],
   "evidencias": {"fechamento":"<citação ou vazio>","followup":"<citação ou vazio>","estoque":"<citação ou vazio>"}
 }
+
+PRIMEIRO PASSO — "eh_atendimento": a caixa da vendedora recebe TODO o WhatsApp dela, inclusive conversa particular. Marque false quando NÃO for atendimento comercial: papo pessoal (amigos, família, apelidos íntimos, combinar carona/encontro, endereço de clínica, assunto doméstico), coordenação interna entre colegas, spam/divulgação de terceiros, ou conversa sem qualquer relação com produto/serviço da loja.
+Se eh_atendimento = false: devolva desfecho "indefinido", nota_geral null, listas vazias e ignore as demais análises — não invente métricas de venda para conversa pessoal.
 
 DESFECHO — use com precisão (não jogue tudo em "indefinido"):
 - "vendido": cliente confirmou a compra
@@ -73,12 +77,18 @@ ERROS — procure ativamente, eles existem. Exemplos reais desta operação:
 - demora_critica: a própria VENDEDORA reconhece sumiço ("desculpa a demora", "estava em atendimento")
 Se não houver erro, devolva [] — mas só depois de procurar de verdade.
 
-RÉGUA DA NOTA:
-- 9-10: qualificou, argumentou valor, quebrou objeção, fechou e/ou fez follow-up
+RÉGUA DA NOTA — mede EFICÁCIA COMERCIAL, não educação. Ser cordial é o mínimo, não é mérito:
+- 9-10: qualificou, argumentou valor, quebrou objeção, fechou e/ou fez follow-up que resgatou o cliente
 - 7-8: bom atendimento, faltou fechar ou aprofundar
 - 5-6: respondeu corretamente mas passivo (só respondeu o que foi perguntado)
 - 3-4: passivo + falhas (negativa seca, preço sem parcelamento, evasivas)
 - 0-2: cliente ficou sem resposta útil, erro grave, ou abandono
+
+TETO OBRIGATÓRIO — nunca dê nota alta quando a venda se perdeu:
+- Cliente informa que JÁ COMPROU em outro lugar, desistiu, ou sumiu após o preço:
+  desfecho = "perdido" (ou "esfriou") e nota MÁXIMA 4 — por mais educada que a
+  vendedora tenha sido. Cordialidade sem venda não é atendimento nota 10.
+- Conversa que termina em agradecimento mútuo sem avanço comercial: nota máxima 5.
 
 Regras: cite trechos REAIS (máx 100 chars). [áudio]/[imagem] são mídias que você não acessou — não invente o conteúdo delas, e não penalize a vendedora por elas. Na dúvida sobre uma pergunta de fechamento, NÃO conte.`;
 
@@ -211,6 +221,7 @@ async function analyzeOne(conv: ConvRow): Promise<boolean> {
     last_message_at:        conv.last_message_at,
     model:                  MODEL,
     prompt_version:         PROMPT_VERSION,
+    eh_atendimento:         out.eh_atendimento !== false,
     msg_count:              list.length,
     audio_count:            audioCount,
     fechamento_count:       Number(out.fechamento_count ?? 0),

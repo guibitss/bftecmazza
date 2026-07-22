@@ -35,7 +35,7 @@ RETURNS TABLE(
   WITH a AS (
     SELECT * FROM conversation_analysis
     WHERE last_message_at >= p_from AND last_message_at < p_to AND vendor_id IS NOT NULL
-      AND analisavel
+      AND analisavel AND eh_atendimento
   ),
   obj AS (
     SELECT a.vendor_id,

@@ -22,7 +22,12 @@ interface BestRow {
   pontos_fortes: string[] | null;
   vendor_id: number;
   desfecho: string;
+  msg_count: number;
 }
+
+const DESFECHO_BADGE: Record<string, string> = {
+  vendido: 'Vendido', agendou: 'Visita agendada',
+};
 
 export async function Destaques({ period }: { period: Period }) {
   const admin = createAdminClient();
@@ -30,11 +35,19 @@ export async function Destaques({ period }: { period: Period }) {
   const to = period.to.toISOString();
 
   const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }] = await Promise.all([
+    // Melhor atendimento = eficácia comercial, não só nota alta: exige
+    // desfecho positivo e conversa com substância (evita "cliente já comprou
+    // em outro lugar" ganhando destaque por cordialidade)
     admin.from('conversation_analysis')
-      .select('conversation_id, nota_geral, pontos_fortes, vendor_id, desfecho')
+      .select('conversation_id, nota_geral, pontos_fortes, vendor_id, desfecho, msg_count')
       .gte('last_message_at', from).lt('last_message_at', to)
+      .eq('analisavel', true)
+      .eq('eh_atendimento', true)
+      .in('desfecho', ['vendido', 'agendou'])
+      .gte('msg_count', 12)
       .not('nota_geral', 'is', null)
       .order('nota_geral', { ascending: false })
+      .order('msg_count', { ascending: false })
       .limit(1),
     admin.from('vendors').select('id, name'),
     admin.rpc('analysis_perdas', { p_from: from, p_to: to }),
@@ -63,21 +76,28 @@ export async function Destaques({ period }: { period: Period }) {
   }
 
   return (
-    <div className="grid lg:grid-cols-2 gap-6">
+    <div className="grid lg:grid-cols-2 gap-6 items-start">
       {/* MELHOR ATENDIMENTO */}
       <Card className="p-5">
         <div className="text-[11px] uppercase tracking-[0.12em] text-fg-subtle flex items-center gap-2">
           <Trophy size={12} /> Melhor atendimento do período
         </div>
         {!top ? (
-          <div className="py-8 text-center text-[12.5px] text-fg-muted">Sem análises no período.</div>
+          <div className="py-8 text-center text-[12.5px] text-fg-muted">
+            Nenhum atendimento com venda ou visita agendada no período.
+          </div>
         ) : (
           <>
-            <div className="mt-3 flex items-baseline gap-3">
+            <div className="mt-3 flex items-baseline gap-3 flex-wrap">
               <span className="text-[26px] font-semibold tracking-[-0.03em]">
                 {cap(nameById.get(top.vendor_id) ?? '—')}
               </span>
               <span className="text-[13px] text-fg-muted num">nota {top.nota_geral}/10</span>
+              {DESFECHO_BADGE[top.desfecho] && (
+                <span className="px-2 py-0.5 rounded-full border border-border text-[10.5px] uppercase tracking-wider text-fg-muted">
+                  {DESFECHO_BADGE[top.desfecho]}
+                </span>
+              )}
             </div>
             {(top.pontos_fortes ?? []).length > 0 && (
               <ul className="mt-2.5 space-y-1">
