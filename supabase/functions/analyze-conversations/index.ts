@@ -129,6 +129,25 @@ Deno.serve(async (req) => {
   return json({ analyzed: ok, failed, skipped, total: queue.length, ms: Date.now() - started });
 });
 
+/**
+ * Conversa curta demais pra analisar: grava um marcador para ela sair da
+ * fila (senão volta em todo lote e entope o limite) e ficar fora dos
+ * agregados via analisavel = false.
+ */
+async function markUnanalyzable(conv: ConvRow, msgCount: number): Promise<void> {
+  await supabase.from('conversation_analysis').upsert({
+    conversation_id: conv.id,
+    store_id:        conv.store_id,
+    vendor_id:       conv.vendor_id,
+    analyzed_at:     new Date().toISOString(),
+    last_message_at: conv.last_message_at,
+    model:           MODEL,
+    prompt_version:  PROMPT_VERSION,
+    msg_count:       msgCount,
+    analisavel:      false,
+  }, { onConflict: 'conversation_id' });
+}
+
 async function analyzeOne(conv: ConvRow): Promise<boolean> {
   const { data: msgs } = await supabase
     .from('messages')
@@ -138,7 +157,7 @@ async function analyzeOne(conv: ConvRow): Promise<boolean> {
     .limit(150);
 
   const list = msgs ?? [];
-  if (list.length < 3) return false;
+  if (list.length < 3) { await markUnanalyzable(conv, list.length); return false; }
 
   let audioCount = 0;
   const lines: string[] = [];
@@ -156,7 +175,7 @@ async function analyzeOne(conv: ConvRow): Promise<boolean> {
     });
     lines.push(`[${hora}] ${who}: ${text.slice(0, 300)}`);
   }
-  if (lines.length < 3) return false;
+  if (lines.length < 3) { await markUnanalyzable(conv, list.length); return false; }
   // Conversa longa: mantém o INÍCIO (onde acontece a qualificação) e o FIM
   // (onde está o desfecho/fechamento) — cortar só o fim escondia metade da análise
   const full = lines.join('\n');
