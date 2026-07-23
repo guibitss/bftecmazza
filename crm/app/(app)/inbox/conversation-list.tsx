@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { isDemo } from '@/lib/supabase/schema';
 import type { InboxAccess } from '@/lib/auth';
 import { timeRelative, initials } from '@/lib/format';
 import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon } from 'lucide-react';
@@ -44,19 +45,24 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
     let cancelled = false;
     (async () => {
       setConvs(null);
-      const { data } = await supabase
-        .from('conversations')
-        .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url')
-        .eq('inbox_id', inbox.inboxId)
-        .order('last_message_at', { ascending: false })
-        .limit(1500);
-      if (!cancelled) setConvs((data ?? []) as ConvRow[]);
+      try {
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url')
+          .eq('inbox_id', inbox.inboxId)
+          .order('last_message_at', { ascending: false })
+          .limit(1500);
+        if (!cancelled) setConvs((data ?? []) as ConvRow[]);
+      } catch {
+        if (!cancelled) setConvs([]);
+      }
     })();
     return () => { cancelled = true; };
   }, [inbox.inboxId, supabase]);
 
-  // Realtime
+  // Realtime — desligado no modo demo (dados estáticos, sem mensagens ao vivo)
   useEffect(() => {
+    if (isDemo()) return;
     const ch = supabase
       .channel(`inbox-${inbox.inboxId}-convs`)
       .on(
