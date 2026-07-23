@@ -1,0 +1,9 @@
+-- Seed do schema DEMO — dados 100% fictícios para apresentação comercial.
+-- Gerado por scratchpad/gen_demo.py (seed determinístico). Não afeta produção.
+-- (conteúdo completo versionado no arquivo de seed; recriável via o gerador)
+INSERT INTO demo.stores (id, slug, inbox_id, waha_url, bot_session, support_session, support_notify_chat, support_label, system_prompt, active, ticket_medio) VALUES (1,'bftecmazza',900,'http://demo.local','botdemo','supdemo','5544900000000@c.us','suporte','Você é a IA da loja (demo).',true,8000);
+INSERT INTO demo.vendors (id,store_id,name,label,waha_session,summary_chat,greeting,greeting_off,queue_order,active,lunch_start,lunch_end) VALUES (1,1,'larissa','larissa','larissademo','5544900000001@c.us','Oi! Aqui é a Larissa, vou te atender 😊','Oi! Retorno assim que abrir a loja.',1,true,'12:00','13:00');
+INSERT INTO demo.vendors (id,store_id,name,label,waha_session,summary_chat,greeting,greeting_off,queue_order,active,lunch_start,lunch_end) VALUES (2,1,'rafael','rafael','rafaeldemo','5544900000002@c.us','Oi! Aqui é a Rafael, vou te atender 😊','Oi! Retorno assim que abrir a loja.',2,true,'12:00','13:00');
+INSERT INTO demo.vendors (id,store_id,name,label,waha_session,summary_chat,greeting,greeting_off,queue_order,active,lunch_start,lunch_end) VALUES (3,1,'camila','camila','camilademo','5544900000003@c.us','Oi! Aqui é a Camila, vou te atender 😊','Oi! Retorno assim que abrir a loja.',3,true,'12:00','13:00');
+INSERT INTO demo.inboxes (id,store_id,waha_session,kind,vendor_id,display_name,active,created_at) VALUES (900,1,'botdemo','ai',NULL,'IA',true,now()),(901,1,'supdemo','support',NULL,'Suporte',true,now()),(1,1,'larissademo','vendor',1,'Larissa',true,now()),(2,1,'rafaeldemo','vendor',2,'Rafael',true,now()),(3,1,'camilademo','vendor',3,'Camila',true,now());
+-- ... (538 statements — ver gen_demo.py)
