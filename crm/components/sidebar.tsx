@@ -22,6 +22,7 @@ import { createClient } from '@/lib/supabase/client';
 import { Logo } from '@/components/logo';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { cn } from '@/lib/utils';
+import { isDemo } from '@/lib/supabase/schema';
 import type { CurrentUser, InboxAccess } from '@/lib/auth';
 
 interface NavItem {
@@ -82,6 +83,11 @@ export function Sidebar({ user }: { user: CurrentUser }) {
           <div className="text-[13px] font-semibold tracking-tight">BF Tec Mazza</div>
           <div className="text-[10px] uppercase tracking-[0.14em] text-fg-subtle">CRM</div>
         </div>
+        {isDemo() && (
+          <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[9px] font-semibold uppercase tracking-wider">
+            Demo
+          </span>
+        )}
       </Link>
 
       {/* Conteúdo com scroll próprio */}

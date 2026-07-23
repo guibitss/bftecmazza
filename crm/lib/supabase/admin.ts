@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { dbSchemaOption } from './schema';
 
 /**
  * Cliente Supabase com SERVICE ROLE — bypassa RLS.
@@ -11,6 +12,7 @@ export function createAdminClient() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
       auth: { autoRefreshToken: false, persistSession: false },
+      ...dbSchemaOption(),
     },
   );
 }
