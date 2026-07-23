@@ -68,7 +68,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'conversations', filter: `inbox_id=eq.${inbox.inboxId}` },
-        (payload) => {
+        (payload: { eventType: string; new: ConvRow; old: Partial<ConvRow> }) => {
           setConvs(prev => {
             if (!prev) return prev;
             const row = (payload.new ?? payload.old) as ConvRow | undefined;

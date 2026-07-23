@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { isDemo } from '@/lib/supabase/schema';
 import { ArrowLeft, MoreVertical } from 'lucide-react';
 import { MessageBubble, type MsgRow } from './message-bubble';
 import { Composer } from './composer';
@@ -57,14 +58,15 @@ export function Thread({ convId, inbox, sendableInboxes, onBack }: Props) {
     return () => { cancelled = true; };
   }, [convId, supabase]);
 
-  // Realtime: novas mensagens
+  // Realtime: novas mensagens (desligado no modo demo)
   useEffect(() => {
+    if (isDemo()) return;
     const ch = supabase
       .channel(`conv-${convId}-msgs`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${convId}` },
-        (payload) => {
+        (payload: { eventType: string; new: MsgRow; old: { id: number } }) => {
           if (payload.eventType === 'INSERT') {
             setMsgs(prev => prev ? [...prev, payload.new as MsgRow] : prev);
           } else if (payload.eventType === 'UPDATE') {
