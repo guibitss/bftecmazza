@@ -8,6 +8,8 @@ import { VendorFilter, type VendorOption } from '@/components/vendor-filter';
 import { VendorDetail } from './vendor-detail';
 import { Destaques } from './destaques';
 import { resolvePeriod, type Period } from '@/lib/period';
+import { cachedMetric } from '@/lib/metrics-cache';
+import { VerMais } from './ver-mais';
 
 interface CampaignRow {
   campaign_id: string;
@@ -127,11 +129,13 @@ export default async function MetricasPage({ searchParams }: {
 
 async function CampaignTable({ period }: { period: Period }) {
   const admin = createAdminClient();
-  const { data } = await admin.rpc('campaign_metrics_range', {
-    p_from: period.from.toISOString(),
-    p_to: period.to.toISOString(),
+  const rows = await cachedMetric(`campaigns:${period.key}`, async () => {
+    const { data } = await admin.rpc('campaign_metrics_range', {
+      p_from: period.from.toISOString(),
+      p_to: period.to.toISOString(),
+    });
+    return (data ?? []) as CampaignRow[];
   });
-  const rows = (data ?? []) as CampaignRow[];
 
   if (rows.length === 0) {
     return (
@@ -232,14 +236,16 @@ function pct(v: number | null) { return v != null ? `${v}%` : '—'; }
 
 async function VendorQualityTable({ period }: { period: Period }) {
   const admin = createAdminClient();
-  const [{ data }, { data: stores }] = await Promise.all([
-    admin.rpc('vendor_quality_metrics', {
-      p_from: period.from.toISOString(),
-      p_to: period.to.toISOString(),
+  const [rows, { data: stores }] = await Promise.all([
+    cachedMetric(`quality:${period.key}`, async () => {
+      const { data } = await admin.rpc('vendor_quality_metrics', {
+        p_from: period.from.toISOString(),
+        p_to: period.to.toISOString(),
+      });
+      return (data ?? []) as VendorQualityRow[];
     }),
     admin.from('stores').select('id, slug'),
   ]);
-  const rows = (data ?? []) as VendorQualityRow[];
   const slug = new Map((stores ?? []).map((s: { id: number; slug: string }) => [s.id, s.slug]));
 
   if (rows.length === 0) {
@@ -282,8 +288,11 @@ async function VendorQualityTable({ period }: { period: Period }) {
                 <td className="px-3 py-3 text-right num">
                   {r.fechamento_por_conv != null ? r.fechamento_por_conv : '—'}
                   {r.convs_sem_fechamento > 0 && (
-                    <span className="ml-1 text-[10.5px] text-amber-600 dark:text-amber-400" title="Conversas sem nenhuma pergunta de fechamento">
-                      ({r.convs_sem_fechamento} sem)
+                    <span className="ml-1.5 inline-flex items-center gap-1">
+                      <span className="text-[10.5px] text-amber-600 dark:text-amber-400" title="Conversas sem nenhuma pergunta de fechamento">
+                        ({r.convs_sem_fechamento} sem)
+                      </span>
+                      <VerMais tipo="sem_fechamento" period={period} vendorId={r.vendor_id} label="ver" />
                     </span>
                   )}
                 </td>

@@ -2,6 +2,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
 import { Trophy, AlertTriangle, ShieldQuestion } from 'lucide-react';
 import type { Period } from '@/lib/period';
+import { cachedMetric } from '@/lib/metrics-cache';
+import { VerMais } from './ver-mais';
 
 /**
  * Destaques do período: melhor atendimento (com trecho real), oportunidades
@@ -34,26 +36,29 @@ export async function Destaques({ period }: { period: Period }) {
   const from = period.from.toISOString();
   const to = period.to.toISOString();
 
-  const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }] = await Promise.all([
-    // Melhor atendimento = eficácia comercial, não só nota alta: exige
-    // desfecho positivo e conversa com substância (evita "cliente já comprou
-    // em outro lugar" ganhando destaque por cordialidade)
-    admin.from('conversation_analysis')
-      .select('conversation_id, nota_geral, pontos_fortes, vendor_id, desfecho, msg_count')
-      .gte('last_message_at', from).lt('last_message_at', to)
-      .eq('analisavel', true)
-      .eq('eh_atendimento', true)
-      .in('desfecho', ['vendido', 'agendou'])
-      .gte('msg_count', 12)
-      .not('nota_geral', 'is', null)
-      .order('nota_geral', { ascending: false })
-      .order('msg_count', { ascending: false })
-      .limit(1),
-    admin.from('vendors').select('id, name'),
-    admin.rpc('analysis_perdas', { p_from: from, p_to: to }),
-    admin.rpc('analysis_objecoes', { p_from: from, p_to: to }),
-    admin.rpc('analysis_valor_risco', { p_from: from, p_to: to }),
-  ]);
+  const { best, vendors, perdas, objs, risco } = await cachedMetric(`destaques:${period.key}`, async () => {
+    const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }] = await Promise.all([
+      // Melhor atendimento = eficácia comercial, não só nota alta: exige
+      // desfecho positivo e conversa com substância (evita "cliente já comprou
+      // em outro lugar" ganhando destaque por cordialidade)
+      admin.from('conversation_analysis')
+        .select('conversation_id, nota_geral, pontos_fortes, vendor_id, desfecho, msg_count')
+        .gte('last_message_at', from).lt('last_message_at', to)
+        .eq('analisavel', true)
+        .eq('eh_atendimento', true)
+        .in('desfecho', ['vendido', 'agendou'])
+        .gte('msg_count', 12)
+        .not('nota_geral', 'is', null)
+        .order('nota_geral', { ascending: false })
+        .order('msg_count', { ascending: false })
+        .limit(1),
+      admin.from('vendors').select('id, name'),
+      admin.rpc('analysis_perdas', { p_from: from, p_to: to }),
+      admin.rpc('analysis_objecoes', { p_from: from, p_to: to }),
+      admin.rpc('analysis_valor_risco', { p_from: from, p_to: to }),
+    ]);
+    return { best, vendors, perdas, objs, risco };
+  });
 
   const nameById = new Map((vendors ?? []).map((v: { id: number; name: string }) => [v.id, v.name]));
   const top = (best ?? [])[0] as BestRow | undefined;
@@ -137,9 +142,9 @@ export async function Destaques({ period }: { period: Period }) {
             <AlertTriangle size={12} /> Oportunidades perdidas
           </div>
           <div className="mt-3 grid grid-cols-3 gap-3">
-            <Metric n={perda?.esfriados ?? 0} label="leads esfriaram" />
-            <Metric n={perda?.followup_perdidos ?? 0} label="follow-ups não feitos" />
-            <Metric n={perda?.negativas_secas ?? 0} label="negativas sem alternativa" />
+            <Metric n={perda?.esfriados ?? 0} label="leads esfriaram" tipo="esfriou" period={period} />
+            <Metric n={perda?.followup_perdidos ?? 0} label="follow-ups não feitos" tipo="followup_perdido" period={period} />
+            <Metric n={perda?.negativas_secas ?? 0} label="negativas sem alternativa" tipo="negativa_seca" period={period} />
           </div>
           {valorTotal > 0 && (
             <div className="mt-4 pt-3 hairline-t">
@@ -195,6 +200,9 @@ export async function Destaques({ period }: { period: Period }) {
                     <span className="w-20 shrink-0 text-[11.5px] num text-fg-muted text-right">
                       {o.total} · {pct != null ? `${pct}%` : '—'}
                     </span>
+                    <span className="w-24 shrink-0 text-right">
+                      <VerMais tipo={`objecao_${o.tipo}`} period={period} label="ver" />
+                    </span>
                   </div>
                 );
               })}
@@ -210,11 +218,14 @@ export async function Destaques({ period }: { period: Period }) {
   );
 }
 
-function Metric({ n, label }: { n: number; label: string }) {
+function Metric({ n, label, tipo, period }: { n: number; label: string; tipo?: string; period?: Period }) {
   return (
     <div>
       <div className="text-[24px] font-semibold tracking-[-0.03em] leading-none num">{n}</div>
       <div className="mt-1 text-[11px] text-fg-muted leading-tight">{label}</div>
+      {tipo && period && n > 0 && (
+        <div className="mt-1.5"><VerMais tipo={tipo} period={period} /></div>
+      )}
     </div>
   );
 }
