@@ -3,10 +3,16 @@ import type { Period } from '@/lib/period';
 
 /**
  * Link "ver mais" que abre, em NOVA GUIA, a lista de conversas por trás de
- * uma métrica. Mantém o período atual.
+ * uma métrica ou de uma sugestão específica do agente. Mantém o período.
  */
-export function VerMais({ tipo, period, vendorId, label = 'ver conversas' }: {
-  tipo: string; period: Period; vendorId?: number; label?: string;
+export function VerMais({ tipo, period, vendorId, storeId, sugRegex, titulo, label = 'ver conversas' }: {
+  tipo: string;
+  period: Period;
+  vendorId?: number;
+  storeId?: number;
+  sugRegex?: string;   // quando é sugestão: regex que casa a sugestão do agente
+  titulo?: string;     // título humano da lista
+  label?: string;
 }) {
   const sp = new URLSearchParams({ tipo });
   if (period.key.startsWith('custom:')) {
@@ -16,6 +22,9 @@ export function VerMais({ tipo, period, vendorId, label = 'ver conversas' }: {
     sp.set('p', period.key);
   }
   if (vendorId) sp.set('v', String(vendorId));
+  if (storeId) sp.set('s', String(storeId));
+  if (sugRegex) sp.set('sug', sugRegex);
+  if (titulo) sp.set('titulo', titulo);
 
   return (
     <a

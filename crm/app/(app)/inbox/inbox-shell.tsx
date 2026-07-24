@@ -1,10 +1,11 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { ConversationList } from './conversation-list';
 import { Thread } from './thread';
-import { ArrowLeft, Inbox as InboxIcon } from 'lucide-react';
+import { Inbox as InboxIcon, Loader2 } from 'lucide-react';
 import type { InboxGroup, InboxAccess } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -24,7 +25,35 @@ export function InboxShell({ groups }: Props) {
     [groups],
   );
 
-  const currentInbox = allInboxes.find(i => String(i.inboxId) === inboxId) ?? null;
+  // Link só com ?conv=X (ex: vindo das Métricas): descobre a caixa da conversa
+  const [resolvedInbox, setResolvedInbox] = useState<string | null>(null);
+  useEffect(() => {
+    if (inboxId || !convId) { setResolvedInbox(null); return; }
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('conversations').select('inbox_id').eq('id', Number(convId)).maybeSingle();
+      if (cancelled || !data?.inbox_id) return;
+      setResolvedInbox(String(data.inbox_id));
+      const sp = new URLSearchParams(search.toString());
+      sp.set('inbox', String(data.inbox_id));
+      window.history.replaceState(null, '', `/inbox?${sp.toString()}`);
+    })();
+    return () => { cancelled = true; };
+  }, [inboxId, convId, search]);
+
+  const effectiveInboxId = inboxId ?? resolvedInbox;
+  const currentInbox = allInboxes.find(i => String(i.inboxId) === effectiveInboxId) ?? null;
+
+  // Resolvendo a caixa de um link só com conv
+  if (!currentInbox && convId && !inboxId) {
+    return (
+      <div className="flex-1 grid place-items-center px-6">
+        <Loader2 size={22} className="animate-spin text-fg-subtle" />
+      </div>
+    );
+  }
 
   function selectConv(id: number | null) {
     const sp = new URLSearchParams(search.toString());

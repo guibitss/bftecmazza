@@ -46,13 +46,25 @@ const DESFECHO_LABEL: Record<string, string> = {
 const DESFECHO_ORDER = ['vendido', 'agendou', 'negociando', 'esfriou', 'perdido', 'indefinido'];
 
 
-// Mapeia o texto livre da sugestão do agente para o tipo de lista mais próximo
-function sugestaoParaTipo(s: string): string {
-  const t = s.toLowerCase();
-  if (/fecha|fechamento/.test(t)) return 'sem_fechamento';
-  if (/follow|retom|depois|recontat/.test(t)) return 'followup_perdido';
-  if (/alternativa|estoque|ponte|indispon/.test(t)) return 'negativa_seca';
-  return 'todas';
+// Categorias canônicas de sugestão: agrupam as variações que o agente
+// escreve ("fazer pergunta de fechamento" / "...mais diretas" / ...) numa
+// linha só. O `regex` casa exatamente as mesmas conversas no "ver" (o RPC
+// usa ~* com esse padrão) — então a contagem da linha bate com a lista.
+const SUG_CATS: { label: string; regex: string }[] = [
+  { label: 'Fazer perguntas de fechamento',            regex: 'fecha' },
+  { label: 'Fazer follow-up dos leads',                regex: 'follow|retom|recontat|reengaj|voltar a falar' },
+  { label: 'Qualificar antes de apresentar o preço',   regex: 'qualific' },
+  { label: 'Oferecer parcelamento proativamente',      regex: 'parcelament|parcela|condi[çc][ãa]o de pagamento' },
+  { label: 'Oferecer alternativa na falta de estoque', regex: 'alternativ|estoque|indispon|ponte' },
+  { label: 'Responder com mais agilidade',             regex: 'r[áa]pid|agilidad|demora|tempo de resposta' },
+];
+
+function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Retorna { label, regex } canônico de uma sugestão livre (ou ela mesma)
+function categoriaDa(s: string): { label: string; regex: string } {
+  const cat = SUG_CATS.find(c => new RegExp(c.regex, 'i').test(s));
+  return cat ?? { label: s, regex: escapeRegex(s) };
 }
 
 function cap(s: string) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -63,6 +75,8 @@ export async function VendorDetail({ vendorId, period }: { vendorId: number; per
     admin.from('conversation_analysis')
       .select('conversation_id, last_message_at, fechamento_count, followup_oportunidade, followup_feito, estoque_situacao, parcelamento_proativo, qualificou_antes_preco, desfecho, sugestoes, pontos_fortes')
       .eq('vendor_id', vendorId)
+      .eq('analisavel', true)
+      .eq('eh_atendimento', true)
       .gte('last_message_at', period.from.toISOString())
       .lt('last_message_at', period.to.toISOString())
       .order('last_message_at', { ascending: true }),
@@ -122,10 +136,26 @@ export async function VendorDetail({ vendorId, period }: { vendorId: number; per
     { label: 'Uso de áudio', mine: me.audio_pct, team: avg(r => r.audio_pct) },
   ];
 
-  // Sugestões mais frequentes + pontos fortes recentes
-  const sugCount = new Map<string, number>();
-  for (const r of rows) for (const s of r.sugestoes ?? []) sugCount.set(s, (sugCount.get(s) ?? 0) + 1);
-  const topSugestoes = Array.from(sugCount.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  // Sugestões agrupadas por categoria canônica — conta CONVERSAS distintas
+  // (não ocorrências), pra bater com o "ver" que lista essas conversas.
+  const catConvs = new Map<string, Set<number>>();
+  const catRegex = new Map<string, string>();
+  for (const r of rows) {
+    const labels = new Set<string>();
+    for (const s of r.sugestoes ?? []) {
+      const { label, regex } = categoriaDa(s);
+      labels.add(label);
+      catRegex.set(label, regex);
+    }
+    for (const label of labels) {
+      if (!catConvs.has(label)) catConvs.set(label, new Set());
+      catConvs.get(label)!.add(r.conversation_id);
+    }
+  }
+  const topSugestoes = Array.from(catConvs.entries())
+    .map(([label, set]) => ({ label, n: set.size, regex: catRegex.get(label)! }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 6);
   const fortes = Array.from(new Set(rows.flatMap(r => r.pontos_fortes ?? []))).slice(-3);
 
   return (
@@ -185,12 +215,12 @@ export async function VendorDetail({ vendorId, period }: { vendorId: number; per
           <ChartTitle>Sugestões mais recorrentes do agente</ChartTitle>
           {topSugestoes.length === 0 ? <Empty /> : (
             <ul className="mt-3 space-y-2.5">
-              {topSugestoes.map(([s, n]) => (
-                <li key={s} className="flex items-start gap-2.5 text-[13px]">
+              {topSugestoes.map(({ label, n, regex }) => (
+                <li key={label} className="flex items-start gap-2.5 text-[13px]">
                   <span className="mt-0.5 shrink-0 px-1.5 py-0.5 rounded-md bg-surface-muted text-[10.5px] num text-fg-subtle">{n}×</span>
-                  <span className="text-fg flex-1">{s}</span>
+                  <span className="text-fg flex-1">{label}</span>
                   <span className="mt-0.5 shrink-0">
-                    <VerMais tipo={sugestaoParaTipo(s)} period={period} vendorId={vendorId} label="ver" />
+                    <VerMais tipo="sugestao" sugRegex={regex} titulo={label} period={period} vendorId={vendorId} label="ver" />
                   </span>
                 </li>
               ))}

@@ -1,10 +1,14 @@
 import { getCurrentUser } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { resolvePeriod } from '@/lib/period';
+import { PeriodFilter } from '@/components/period-filter';
+import { VendorFilter, type VendorOption } from '@/components/vendor-filter';
+import { StoreFilter, type StoreOption } from '@/components/store-filter';
 import { ArrowUpRight, MessageSquare } from 'lucide-react';
 
 interface Row {
   conversation_id: number;
+  inbox_id: number | null;
   vendor_id: number;
   vendor_name: string;
   customer_name: string;
@@ -15,14 +19,24 @@ interface Row {
   sugestao: string | null;
 }
 
+function convHref(r: { conversation_id: number; inbox_id: number | null }): string {
+  return r.inbox_id
+    ? `/inbox?inbox=${r.inbox_id}&conv=${r.conversation_id}`
+    : `/inbox?conv=${r.conversation_id}`;
+}
+
 const TITULOS: Record<string, { titulo: string; explica: string }> = {
   sem_fechamento:   { titulo: 'Poderiam ter pergunta de fechamento', explica: 'Conversas em que a vendedora não fez nenhuma pergunta que empurrasse a decisão de compra.' },
   followup_perdido: { titulo: 'Follow-ups não feitos', explica: 'O cliente sinalizou que decidiria depois e não houve retomada por parte da vendedora.' },
   negativa_seca:    { titulo: 'Negativas sem alternativa', explica: 'Cliente pediu algo indisponível e recebeu só o "não", sem oferta de alternativa.' },
   esfriou:          { titulo: 'Leads que esfriaram', explica: 'Conversas em que o cliente parou de responder ou desistiu.' },
+  todas:            { titulo: 'Conversas analisadas', explica: 'Todas as conversas de atendimento analisadas no período.' },
 };
 
-function tituloDe(tipo: string) {
+function tituloDe(tipo: string, tituloParam?: string) {
+  if (tipo === 'sugestao' && tituloParam) {
+    return { titulo: tituloParam, explica: 'Conversas em que o agente sugeriu exatamente isso.' };
+  }
   if (tipo.startsWith('objecao_')) {
     const t = tipo.slice(8);
     const nomes: Record<string, string> = { preco: 'preço', prazo: 'prazo', concorrencia: 'concorrência', confianca: 'confiança', estoque: 'estoque' };
@@ -42,41 +56,55 @@ function fmtDate(iso: string) {
 }
 
 export default async function ListaPage({ searchParams }: {
-  searchParams: Promise<{ tipo?: string; v?: string; p?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ tipo?: string; v?: string; s?: string; sug?: string; titulo?: string; p?: string; from?: string; to?: string }>;
 }) {
   await getCurrentUser();
   const sp = await searchParams;
-  const tipo = sp.tipo ?? 'sem_fechamento';
+  const tipo = sp.tipo ?? 'todas';
   const vendorId = sp.v ? Number(sp.v) : null;
+  const storeId = sp.s ? Number(sp.s) : null;
   const period = resolvePeriod(sp);
-  const { titulo, explica } = tituloDe(tipo);
+  const { titulo, explica } = tituloDe(tipo, sp.titulo);
 
   const admin = createAdminClient();
-  const [{ data }, { data: vendor }] = await Promise.all([
+  const [{ data }, { data: vendorRows }, { data: storeRows }] = await Promise.all([
     admin.rpc('analysis_conversas', {
       p_tipo: tipo,
       p_from: period.from.toISOString(),
       p_to: period.to.toISOString(),
       p_vendor: vendorId,
+      p_store: storeId,
+      p_sug_regex: sp.sug ?? null,
     }),
-    vendorId ? admin.from('vendors').select('name').eq('id', vendorId).maybeSingle() : Promise.resolve({ data: null }),
+    admin.from('vendors').select('id, name, stores:store_id(slug)').eq('active', true).order('store_id').order('queue_order'),
+    admin.from('stores').select('id, slug').eq('active', true).order('id'),
   ]);
   const rows = (data ?? []) as Row[];
-  const vendorName = (vendor as { name?: string } | null)?.name;
+  const vendors: VendorOption[] = (vendorRows ?? []).map((v: Record<string, unknown>) => {
+    const storeRel = v.stores as { slug?: string } | { slug: string }[] | null;
+    const slug = Array.isArray(storeRel) ? storeRel[0]?.slug ?? '' : storeRel?.slug ?? '';
+    return { id: v.id as number, name: v.name as string, storeSlug: slug };
+  });
+  const stores = (storeRows ?? []) as StoreOption[];
 
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-950">
-      <div className="hairline-b h-16 px-8 flex items-center">
+      <div className="hairline-b h-16 px-8 flex items-center justify-between gap-3">
         <span className="text-[10px] uppercase tracking-[0.18em] text-fg-subtle">
           Métricas · Conversas
         </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <StoreFilter stores={stores} />
+          <VendorFilter vendors={vendors} />
+          <PeriodFilter />
+        </div>
       </div>
 
       <div className="px-8 py-10 max-w-4xl mx-auto">
         <h1 className="text-[26px] font-semibold tracking-[-0.03em]">{titulo}</h1>
-        <p className="mt-2 text-[13.5px] text-fg-muted max-w-2xl">{explica}</p>
+        {explica && <p className="mt-2 text-[13.5px] text-fg-muted max-w-2xl">{explica}</p>}
         <div className="mt-1.5 text-[12px] text-fg-subtle">
-          {vendorName ? `${cap(vendorName)} · ` : ''}{period.label} · {rows.length} conversa{rows.length === 1 ? '' : 's'}
+          {period.label} · {rows.length} conversa{rows.length === 1 ? '' : 's'}
         </div>
 
         {rows.length === 0 ? (
@@ -88,7 +116,7 @@ export default async function ListaPage({ searchParams }: {
             {rows.map(r => (
               <li key={r.conversation_id}>
                 <a
-                  href={`/inbox?conv=${r.conversation_id}`}
+                  href={convHref(r)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="group flex items-start gap-3 rounded-xl border border-border bg-surface p-4 hover:border-border-strong transition-colors"
