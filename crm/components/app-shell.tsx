@@ -82,11 +82,9 @@ export function AppShell({ user, children }: { user: CurrentUser; children: Reac
         )}
       </main>
 
-      {/* Coach de vendas — balãozinho flutuante */}
-      <SalesCoach
-        storeId={user.managerOfStoreId ?? user.groups[0]?.storeId ?? null}
-        vendorId={user.vendorIds[0] ?? null}
-      />
+      {/* Coach de vendas — balãozinho flutuante.
+          O escopo (qual vendedora) é resolvido no servidor pelo token de login. */}
+      <SalesCoach />
 
       {/* Close button no drawer (no canto) */}
       {drawerOpen && (

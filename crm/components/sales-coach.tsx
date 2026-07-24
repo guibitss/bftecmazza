@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Bot, X, Send, Mic, ImagePlus, Maximize2, Minimize2, Square, Loader2 } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 
 interface Msg { role: 'user' | 'assistant'; content: string; image?: string; }
@@ -14,7 +15,7 @@ const SUGESTOES = [
   'Me dá um script de fechamento',
 ];
 
-export function SalesCoach({ storeId, vendorId }: { storeId: number | null; vendorId: number | null }) {
+export function SalesCoach() {
   const [open, setOpen] = useState(false);
   const [full, setFull] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -37,12 +38,18 @@ export function SalesCoach({ storeId, vendorId }: { storeId: number | null; vend
     setMsgs(nextMsgs);
     setInput(''); setPendingImg(null); setLoading(true);
     try {
+      // Identidade vai pelo token de login — o servidor decide o escopo
+      // (a vendedora só vê os próprios atendimentos). Nunca mandamos vendor_id.
+      const { data: { session } } = await createClient().auth.getSession();
       const res = await fetch(COACH_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! },
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+          'Authorization': `Bearer ${session?.access_token ?? ''}`,
+        },
         body: JSON.stringify({
           messages: nextMsgs.map(m => ({ role: m.role, content: m.content })),
-          store_id: storeId, vendor_id: vendorId,
           image_b64: imageB64, audio_b64: audioB64,
         }),
       });

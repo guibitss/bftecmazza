@@ -6,11 +6,17 @@
  * dicas práticas. Aceita texto, transcreve áudio (Whisper) e lê imagem
  * (vision). Não altera nada — é consultivo.
  *
+ * ESCOPO POR IDENTIDADE (segurança): a função descobre QUEM está falando a
+ * partir do token de login (Authorization: Bearer <jwt do usuário>), NÃO do
+ * corpo da requisição. Uma vendedora só enxerga os atendimentos do próprio
+ * número; um gerente vê a loja dele; um admin vê tudo. O cliente não
+ * consegue pedir dados de outra vendedora trocando um id na requisição.
+ *
  * Body: {
  *   messages: [{role:'user'|'assistant', content:string}],
- *   store_id?: number, vendor_id?: number,
- *   image_url?: string,     // foto pública pra análise (print de conversa etc.)
- *   audio_url?: string      // áudio pra transcrever antes de responder
+ *   focus_vendor_id?: number,   // só respeitado se o caller tiver direito a esse vendedor
+ *   image_b64?: string,         // print de conversa pra análise (vision)
+ *   audio_b64?: string          // áudio pra transcrever antes de responder
  * }
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -37,6 +43,76 @@ Quando o vendedor mandar um PRINT de conversa (imagem) ou perguntar "o que eu de
 
 Princípios de venda que você defende: qualificar antes do preço; sempre oferecer parcelamento junto do valor; nunca dar um "não" sem alternativa; fazer pergunta de fechamento; e follow-up de quem não respondeu. Seja específico ao contexto da mensagem.`;
 
+interface Caller {
+  userId: string;
+  name: string;
+  isAdmin: boolean;
+  managerStoreId: number | null;
+  vendorIds: number[];   // vendedores cujo número este login opera
+}
+
+/**
+ * Descobre a identidade do chamador pelo token de login. Retorna null se o
+ * token for inválido / usuário inativo (a função responde 401).
+ */
+async function resolveCaller(authHeader: string | null): Promise<Caller | null> {
+  const token = (authHeader ?? '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return null;
+
+  const { data: userData, error } = await supabase.auth.getUser(token);
+  if (error || !userData?.user) return null;
+  const uid = userData.user.id;
+
+  const { data: profile } = await supabase
+    .from('app_users')
+    .select('name, is_admin, manager_of_store_id, active, status')
+    .eq('id', uid).maybeSingle();
+  if (!profile || !profile.active || profile.status !== 'approved') return null;
+
+  const { data: ui } = await supabase
+    .from('user_inboxes')
+    .select('can_send, inboxes:inbox_id(kind, vendor_id)')
+    .eq('user_id', uid);
+  const vendorIds = new Set<number>();
+  for (const row of ui ?? []) {
+    const rel = (row as { inboxes?: unknown }).inboxes;
+    const ib = (Array.isArray(rel) ? rel[0] : rel) as { kind?: string; vendor_id?: number | null } | null;
+    if (ib && ib.kind === 'vendor' && ib.vendor_id && (row as { can_send?: boolean }).can_send) {
+      vendorIds.add(ib.vendor_id);
+    }
+  }
+
+  return {
+    userId: uid,
+    name: (profile.name as string) ?? 'colega',
+    isAdmin: !!profile.is_admin,
+    managerStoreId: (profile.manager_of_store_id as number | null) ?? null,
+    vendorIds: Array.from(vendorIds),
+  };
+}
+
+/** Conjunto de vendedores que o chamador tem direito de enxergar. */
+async function allowedVendorSet(
+  caller: Caller,
+  vendors: Map<number, { name: string; store_id: number }>,
+): Promise<Set<number>> {
+  if (caller.isAdmin) return new Set(vendors.keys());
+  const allowed = new Set<number>(caller.vendorIds);
+  if (caller.managerStoreId != null) {
+    for (const [id, v] of vendors) if (v.store_id === caller.managerStoreId) allowed.add(id);
+  }
+  return allowed;
+}
+
+async function loadVendors(): Promise<Map<number, { name: string; store_id: number }>> {
+  const { data } = await supabase.from('vendors').select('id, name, store_id');
+  const m = new Map<number, { name: string; store_id: number }>();
+  for (const v of (data ?? []) as Array<{ id: number; name: string; store_id: number }>) {
+    m.set(v.id, { name: v.name, store_id: v.store_id });
+  }
+  return m;
+}
+
 function b64ToBytes(dataOrB64: string): Uint8Array {
   const b64 = dataOrB64.includes(',') ? dataOrB64.split(',')[1] : dataOrB64;
   const bin = atob(b64);
@@ -47,7 +123,8 @@ function b64ToBytes(dataOrB64: string): Uint8Array {
 
 async function transcribeBytes(bytes: Uint8Array): Promise<string> {
   const fd = new FormData();
-  fd.append('file', new Blob([bytes], { type: 'audio/webm' }), 'audio.webm');
+  const part = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  fd.append('file', new Blob([part], { type: 'audio/webm' }), 'audio.webm');
   fd.append('model', 'whisper-1');
   fd.append('language', 'pt');
   const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -57,18 +134,27 @@ async function transcribeBytes(bytes: Uint8Array): Promise<string> {
   return (await r.json())?.text ?? '';
 }
 
-async function metricsContext(storeId?: number, vendorId?: number): Promise<string> {
-  if (!storeId && !vendorId) return '';
+/**
+ * Contexto de métricas ESCOPADO: só entram vendedores do conjunto `allowed`;
+ * se houver `focus`, restringe a esse único vendedor.
+ */
+async function metricsContext(
+  allowed: Set<number>,
+  focus: number | null,
+): Promise<string> {
+  if (allowed.size === 0) return '';
   const from = new Date(Date.now() - 30 * 86400_000).toISOString();
   const to = new Date().toISOString();
   const { data } = await supabase.rpc('vendor_quality_metrics', { p_from: from, p_to: to });
-  const rows = (data ?? []) as Array<Record<string, unknown>>;
-  const pick = vendorId ? rows.filter(r => r.vendor_id === vendorId) : rows;
-  if (pick.length === 0) return '';
-  const linhas = pick.map(r =>
-    `- ${r.vendor_name}: nota ${r.nota_media ?? '—'}, fechamento/conv ${r.fechamento_por_conv ?? '—'}, ` +
+  let rows = ((data ?? []) as Array<Record<string, unknown>>)
+    .filter(r => allowed.has(r.vendor_id as number));
+  if (focus) rows = rows.filter(r => r.vendor_id === focus);
+  if (rows.length === 0) return '';
+  const linhas = rows.map(r =>
+    `- ${r.vendor_name}: fechamento/conv ${r.fechamento_por_conv ?? '—'}, ` +
     `follow-up ${r.followup_feitos}/${r.followup_oportunidades}, vendidos ${r.vendidos}, ` +
-    `objeções contornadas ${r.objecoes_quebradas}/${r.objecoes_total}, áudio ${r.audio_pct ?? '—'}%`,
+    `esfriados ${r.esfriados ?? '—'}, qualificação ${r.qualificacao_pct ?? '—'}%, ` +
+    `parc. proativo ${r.parcelamento_proativo_pct ?? '—'}%, áudio ${r.audio_pct ?? '—'}%`,
   ).join('\n');
   return `\n\nMÉTRICAS DOS ÚLTIMOS 30 DIAS (use para embasar):\n${linhas}`;
 }
@@ -77,9 +163,13 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
 
+  // Identidade vem do token de login, nunca do corpo.
+  const caller = await resolveCaller(req.headers.get('Authorization'));
+  if (!caller) return json({ error: 'não autenticado' }, 401);
+
   let body: {
     messages?: { role: string; content: string }[];
-    store_id?: number; vendor_id?: number; image_b64?: string; audio_b64?: string;
+    focus_vendor_id?: number; image_b64?: string; audio_b64?: string;
   };
   try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
 
@@ -87,16 +177,41 @@ Deno.serve(async (req) => {
   let transcript = '';
 
   try {
+    const vendors = await loadVendors();
+    const allowed = await allowedVendorSet(caller, vendors);
+    const isSupervisor = caller.isAdmin || caller.managerStoreId != null;
+
+    // Escopo de foco:
+    // - vendedora comum (1 número, sem papel de gestão) → SEMPRE o número dela;
+    // - supervisor → pode focar num vendedor específico, desde que tenha direito.
+    let focus: number | null = null;
+    if (!isSupervisor && caller.vendorIds.length === 1) {
+      focus = caller.vendorIds[0];
+    } else if (body.focus_vendor_id && allowed.has(body.focus_vendor_id)) {
+      focus = body.focus_vendor_id;
+    }
+
+    // Nota de escopo pro modelo — deixa explícito de quem ele pode falar.
+    let scopeNote = '';
+    if (focus && !isSupervisor) {
+      const v = vendors.get(focus);
+      scopeNote = `\n\nVocê está falando com ${caller.name}, VENDEDORA${v ? ` (${v.name})` : ''}. ` +
+        `Analise SOMENTE os atendimentos DELA — os números acima são só dela. ` +
+        `Se pedirem dados de outra vendedora ou da loja inteira, explique com educação que você só tem acesso aos atendimentos dela.`;
+    } else if (isSupervisor) {
+      scopeNote = `\n\nVocê está falando com ${caller.name}, que supervisiona ${caller.managerStoreId ? 'a loja' : 'a operação'}. ` +
+        `Pode analisar e comparar as vendedoras sob a gestão dele(a).`;
+    }
+
     // Áudio → transcreve e vira a última mensagem do usuário
     if (body.audio_b64) {
       transcript = await transcribeBytes(b64ToBytes(body.audio_b64));
       if (transcript) history.push({ role: 'user', content: transcript });
     }
 
-    const ctx = await metricsContext(body.store_id, body.vendor_id);
+    const ctx = await metricsContext(allowed, focus);
 
-    // Monta as mensagens; se veio imagem, anexa na última do usuário (vision)
-    const msgs: Array<Record<string, unknown>> = [{ role: 'system', content: SYSTEM + ctx }];
+    const msgs: Array<Record<string, unknown>> = [{ role: 'system', content: SYSTEM + ctx + scopeNote }];
     for (let i = 0; i < history.length; i++) {
       const m = history[i];
       const isLastUser = i === history.length - 1 && m.role === 'user';
