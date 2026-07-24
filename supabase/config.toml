@@ -31,3 +31,6 @@ verify_jwt = false
 
 [functions.chateau-report]
 verify_jwt = false
+
+[functions.sales-coach]
+verify_jwt = false

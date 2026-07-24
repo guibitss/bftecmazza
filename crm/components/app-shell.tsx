@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Menu, X } from 'lucide-react';
 import { Sidebar } from '@/components/sidebar';
 import { Logo } from '@/components/logo';
+import { SalesCoach } from '@/components/sales-coach';
 import type { CurrentUser } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -80,6 +81,12 @@ export function AppShell({ user, children }: { user: CurrentUser; children: Reac
           </div>
         )}
       </main>
+
+      {/* Coach de vendas — balãozinho flutuante */}
+      <SalesCoach
+        storeId={user.managerOfStoreId ?? user.groups[0]?.storeId ?? null}
+        vendorId={user.vendorIds[0] ?? null}
+      />
 
       {/* Close button no drawer (no canto) */}
       {drawerOpen && (
