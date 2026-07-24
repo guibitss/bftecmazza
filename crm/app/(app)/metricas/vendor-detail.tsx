@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
 import type { Period } from '@/lib/period';
+import { VerMais } from './ver-mais';
 
 /**
  * Visão individual da vendedora — tiles + gráficos SVG server-rendered.
@@ -43,6 +44,16 @@ const DESFECHO_LABEL: Record<string, string> = {
   esfriou: 'Esfriou', perdido: 'Perdido', indefinido: 'Indefinido',
 };
 const DESFECHO_ORDER = ['vendido', 'agendou', 'negociando', 'esfriou', 'perdido', 'indefinido'];
+
+
+// Mapeia o texto livre da sugestão do agente para o tipo de lista mais próximo
+function sugestaoParaTipo(s: string): string {
+  const t = s.toLowerCase();
+  if (/fecha|fechamento/.test(t)) return 'sem_fechamento';
+  if (/follow|retom|depois|recontat/.test(t)) return 'followup_perdido';
+  if (/alternativa|estoque|ponte|indispon/.test(t)) return 'negativa_seca';
+  return 'todas';
+}
 
 function cap(s: string) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
@@ -177,7 +188,10 @@ export async function VendorDetail({ vendorId, period }: { vendorId: number; per
               {topSugestoes.map(([s, n]) => (
                 <li key={s} className="flex items-start gap-2.5 text-[13px]">
                   <span className="mt-0.5 shrink-0 px-1.5 py-0.5 rounded-md bg-surface-muted text-[10.5px] num text-fg-subtle">{n}×</span>
-                  <span className="text-fg">{s}</span>
+                  <span className="text-fg flex-1">{s}</span>
+                  <span className="mt-0.5 shrink-0">
+                    <VerMais tipo={sugestaoParaTipo(s)} period={period} vendorId={vendorId} label="ver" />
+                  </span>
                 </li>
               ))}
             </ul>

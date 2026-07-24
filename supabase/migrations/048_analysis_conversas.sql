@@ -26,7 +26,8 @@ RETURNS TABLE(
     AND ca.last_message_at >= p_from AND ca.last_message_at < p_to
     AND (p_vendor IS NULL OR ca.vendor_id = p_vendor)
     AND (
-      (p_tipo = 'sem_fechamento'   AND COALESCE(ca.fechamento_count,0) = 0)
+      p_tipo = 'todas'
+      OR (p_tipo = 'sem_fechamento'   AND COALESCE(ca.fechamento_count,0) = 0)
       OR (p_tipo = 'followup_perdido' AND ca.followup_oportunidade AND NOT ca.followup_feito)
       OR (p_tipo = 'negativa_seca'  AND ca.estoque_situacao = 'negativa_seca')
       OR (p_tipo = 'esfriou'        AND ca.desfecho IN ('esfriou','perdido'))
