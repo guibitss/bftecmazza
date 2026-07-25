@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
-import { Trophy, AlertTriangle, ShieldQuestion } from 'lucide-react';
+import { Trophy, AlertTriangle, ShieldQuestion, Star } from 'lucide-react';
 import type { Period } from '@/lib/period';
 import { cachedMetric } from '@/lib/metrics-cache';
 import { VerMais } from './ver-mais';
@@ -36,29 +36,54 @@ export async function Destaques({ period }: { period: Period }) {
   const from = period.from.toISOString();
   const to = period.to.toISOString();
 
-  const { best, vendors, perdas, objs, risco } = await cachedMetric(`destaques:${period.key}`, async () => {
-    const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }] = await Promise.all([
-      // Melhor atendimento = eficácia comercial, não só nota alta: exige
-      // desfecho positivo e conversa com substância (evita "cliente já comprou
-      // em outro lugar" ganhando destaque por cordialidade)
-      admin.from('conversation_analysis')
-        .select('conversation_id, nota_geral, pontos_fortes, vendor_id, desfecho, msg_count')
-        .gte('last_message_at', from).lt('last_message_at', to)
-        .eq('analisavel', true)
-        .eq('eh_atendimento', true)
-        .in('desfecho', ['vendido', 'agendou'])
-        .gte('msg_count', 12)
-        .not('nota_geral', 'is', null)
-        .order('nota_geral', { ascending: false })
-        .order('msg_count', { ascending: false })
-        .limit(1),
-      admin.from('vendors').select('id, name'),
-      admin.rpc('analysis_perdas', { p_from: from, p_to: to }),
-      admin.rpc('analysis_objecoes', { p_from: from, p_to: to }),
-      admin.rpc('analysis_valor_risco', { p_from: from, p_to: to }),
+  const { best, vendors, perdas, objs, risco, notaCounts } = await cachedMetric(`destaques:${period.key}`, async () => {
+    // Contagem exata por nota (0..10): head+count não transfere linha, então
+    // não esbarra no teto de linhas do PostgREST (o mês tem >2k conversas).
+    const notaQ = (k: number) => admin.from('conversation_analysis')
+      .select('*', { count: 'exact', head: true })
+      .gte('last_message_at', from).lt('last_message_at', to)
+      .eq('analisavel', true).eq('eh_atendimento', true)
+      .eq('nota_geral', k)
+      .then(r => r.count ?? 0);
+
+    const [base, notaCounts] = await Promise.all([
+      Promise.all([
+        // Melhor atendimento = eficácia comercial, não só nota alta: exige
+        // desfecho positivo e conversa com substância (evita "cliente já comprou
+        // em outro lugar" ganhando destaque por cordialidade)
+        admin.from('conversation_analysis')
+          .select('conversation_id, nota_geral, pontos_fortes, vendor_id, desfecho, msg_count')
+          .gte('last_message_at', from).lt('last_message_at', to)
+          .eq('analisavel', true)
+          .eq('eh_atendimento', true)
+          .in('desfecho', ['vendido', 'agendou'])
+          .gte('msg_count', 12)
+          .not('nota_geral', 'is', null)
+          .order('nota_geral', { ascending: false })
+          .order('msg_count', { ascending: false })
+          .limit(1),
+        admin.from('vendors').select('id, name'),
+        admin.rpc('analysis_perdas', { p_from: from, p_to: to }),
+        admin.rpc('analysis_objecoes', { p_from: from, p_to: to }),
+        admin.rpc('analysis_valor_risco', { p_from: from, p_to: to }),
+      ]),
+      Promise.all(Array.from({ length: 11 }, (_, k) => notaQ(k))),
     ]);
-    return { best, vendors, perdas, objs, risco };
+    const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }] = base;
+    return { best, vendors, perdas, objs, risco, notaCounts };
   });
+
+  // Histograma de qualidade: soma as contagens exatas em faixas + média real.
+  const nc = (notaCounts ?? []) as number[];
+  const totalNotas = nc.reduce((a, b) => a + b, 0);
+  const mediaNota = totalNotas > 0 ? (nc.reduce((a, c, k) => a + c * k, 0) / totalNotas).toFixed(1) : null;
+  const notaBands = [
+    { label: '9–10', n: (nc[9] ?? 0) + (nc[10] ?? 0) },
+    { label: '7–8',  n: (nc[7] ?? 0) + (nc[8] ?? 0) },
+    { label: '4–6',  n: (nc[4] ?? 0) + (nc[5] ?? 0) + (nc[6] ?? 0) },
+    { label: '0–3',  n: (nc[0] ?? 0) + (nc[1] ?? 0) + (nc[2] ?? 0) + (nc[3] ?? 0) },
+  ];
+  const maxBand = Math.max(1, ...notaBands.map(b => b.n));
 
   const nameById = new Map((vendors ?? []).map((v: { id: number; name: string }) => [v.id, v.name]));
   const top = (best ?? [])[0] as BestRow | undefined;
@@ -82,6 +107,7 @@ export async function Destaques({ period }: { period: Period }) {
 
   return (
     <div className="grid lg:grid-cols-2 gap-6 items-start">
+     <div className="space-y-6">
       {/* MELHOR ATENDIMENTO */}
       <Card className="p-5">
         <div className="text-[11px] uppercase tracking-[0.12em] text-fg-subtle flex items-center gap-2">
@@ -134,6 +160,45 @@ export async function Destaques({ period }: { period: Period }) {
           </>
         )}
       </Card>
+
+      {/* DISTRIBUIÇÃO DAS NOTAS */}
+      <Card className="p-5">
+        <div className="text-[11px] uppercase tracking-[0.12em] text-fg-subtle flex items-center gap-2">
+          <Star size={12} /> Distribuição das notas
+        </div>
+        {totalNotas === 0 ? (
+          <div className="py-6 text-center text-[12.5px] text-fg-muted">
+            Nenhum atendimento avaliado no período.
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 flex items-baseline gap-2.5">
+              <span className="text-[26px] font-semibold tracking-[-0.03em] leading-none num">{mediaNota}</span>
+              <span className="text-[12px] text-fg-muted">
+                nota média · {totalNotas.toLocaleString('pt-BR')} atendimentos avaliados
+              </span>
+            </div>
+            <div className="mt-4 space-y-2.5">
+              {notaBands.map(b => (
+                <div key={b.label} className="flex items-center gap-3">
+                  <span className="w-12 shrink-0 text-[12px] num text-fg-muted text-right">{b.label}</span>
+                  <div className="flex-1 h-4 relative">
+                    <div className="absolute inset-y-0 left-0 rounded-r-[3px] rounded-l-[2px] bg-zinc-900 dark:bg-zinc-100"
+                      style={{ width: `${b.n > 0 ? Math.max(3, (b.n / maxBand) * 100) : 0}%` }} />
+                  </div>
+                  <span className="w-20 shrink-0 text-[11.5px] num text-fg-muted text-right">
+                    {b.n} · {Math.round((100 * b.n) / totalNotas)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] text-fg-subtle leading-relaxed">
+              Faixas de qualidade (0–10) atribuídas pelo agente. Só entram conversas avaliáveis.
+            </p>
+          </>
+        )}
+      </Card>
+     </div>
 
       <div className="space-y-6">
         {/* DINHEIRO NA MESA */}

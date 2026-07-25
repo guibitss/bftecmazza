@@ -46,6 +46,18 @@ function AuthorBadge({ msg }: { msg: MsgRow }) {
 export function MessageBubble({ msg }: { msg: MsgRow }) {
   const isOut = msg.direction === 'out';
 
+  // A ingestão às vezes grava mídia com kind='text' (mas media_url + media_mime
+  // corretos) — então o tipo efetivo vem do MIME primeiro e só cai no kind
+  // quando não há mime. Conserta áudios/imagens que apareciam como bolha vazia.
+  const mime = msg.media_mime ?? '';
+  const mediaKind: 'image' | 'video' | 'audio' | 'document' | 'sticker' | null =
+    !msg.media_url ? null
+    : mime.startsWith('image/') ? (msg.kind === 'sticker' ? 'sticker' : 'image')
+    : mime.startsWith('video/') ? 'video'
+    : mime.startsWith('audio/') ? 'audio'
+    : msg.kind === 'image' || msg.kind === 'video' || msg.kind === 'audio' || msg.kind === 'sticker' || msg.kind === 'document' ? msg.kind
+    : 'document'; // tem arquivo mas mime desconhecido → ao menos deixa baixar
+
   return (
     <div className={cn('flex animate-fade-in', isOut ? 'justify-end' : 'justify-start')}>
       <div
@@ -57,8 +69,8 @@ export function MessageBubble({ msg }: { msg: MsgRow }) {
             : 'bg-surface text-fg border border-border rounded-bl-md',
         )}
       >
-        {/* Mídia */}
-        {msg.kind === 'image' && msg.media_url && (
+        {/* Mídia — tipo efetivo (MIME tem prioridade sobre o kind) */}
+        {mediaKind === 'image' && msg.media_url && (
           <a href={msg.media_url} target="_blank" rel="noopener" className="block -mx-2 -mt-1 mb-1.5">
             <Image
               src={msg.media_url}
@@ -69,7 +81,7 @@ export function MessageBubble({ msg }: { msg: MsgRow }) {
             />
           </a>
         )}
-        {msg.kind === 'video' && msg.media_url && (
+        {mediaKind === 'video' && msg.media_url && (
           <video
             controls
             preload="metadata"
@@ -77,10 +89,10 @@ export function MessageBubble({ msg }: { msg: MsgRow }) {
             className="rounded-xl max-h-[320px] -mx-2 -mt-1 mb-1.5"
           />
         )}
-        {msg.kind === 'audio' && msg.media_url && (
+        {mediaKind === 'audio' && msg.media_url && (
           <audio controls preload="metadata" src={msg.media_url} className="my-1 max-w-full" />
         )}
-        {msg.kind === 'document' && msg.media_url && (
+        {mediaKind === 'document' && msg.media_url && (
           <a
             href={msg.media_url}
             target="_blank"
@@ -95,7 +107,7 @@ export function MessageBubble({ msg }: { msg: MsgRow }) {
             <Download size={14} className="shrink-0 opacity-70" />
           </a>
         )}
-        {msg.kind === 'sticker' && msg.media_url && (
+        {mediaKind === 'sticker' && msg.media_url && (
           <Image src={msg.media_url} alt="sticker" width={120} height={120} unoptimized className="max-h-[120px] w-auto" />
         )}
         {msg.kind === 'location' && (
@@ -106,7 +118,7 @@ export function MessageBubble({ msg }: { msg: MsgRow }) {
         {msg.body && (
           <div className="whitespace-pre-wrap break-words">{msg.body}</div>
         )}
-        {!msg.body && !msg.media_url && msg.kind !== 'text' && (
+        {!msg.body && !mediaKind && msg.kind !== 'text' && msg.kind !== 'location' && (
           <div className={cn('text-[12.5px] italic', isOut ? 'opacity-70' : 'text-fg-muted')}>
             [{msg.kind}]
           </div>
