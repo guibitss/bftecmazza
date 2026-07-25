@@ -23,7 +23,7 @@ const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')!;
 // modelo forte faz a análise profunda (nuances de follow-up, objeção, nota).
 const MODEL_DEEP  = Deno.env.get('OPENAI_MODEL_DEEP')  ?? 'gpt-4o';
 const MODEL_LIGHT = Deno.env.get('OPENAI_MODEL_LIGHT') ?? 'gpt-4o-mini';
-const PROMPT_VERSION = 4;
+const PROMPT_VERSION = 5;
 
 const DEFAULT_LIMIT   = 90;        // gpt-4o é mais lento; lotes menores + cron horário
 const CONCURRENCY     = 6;
@@ -61,6 +61,10 @@ DESFECHO — use com precisão (não jogue tudo em "indefinido"):
 - "esfriou": cliente parou de responder ou adiou sem retomada
 - "perdido": desistiu explicitamente ou foi para concorrente
 - "indefinido": SOMENTE se a transcrição for curta/ruidosa demais para julgar
+TEMPO — o usuário informa em CONTEXTO há quanto tempo foi a última mensagem. Use isso:
+- Última mensagem recente (poucas horas) = conversa provavelmente VIVA → "em_andamento" ou "negociando", NUNCA "esfriou". Cliente que ainda não respondeu há pouco tempo NÃO é lead perdido.
+- "esfriou" exige silêncio do cliente por tempo relevante (idealmente dias) DEPOIS de ter demonstrado interesse.
+- "perdido" exige sinal EXPLÍCITO (desistiu, "já comprei", foi pro concorrente) — nunca deduza perda só por silêncio curto.
 
 OBJEÇÕES — qualquer resistência ou hesitação do CLIENTE que precise ser contornada. Procure ativamente, elas são frequentes:
 - preco: "tá caro", "consigo mais barato", questiona o valor ou o desconto oferecido, estranha que o preço não baixou
@@ -187,7 +191,7 @@ async function markUnanalyzable(conv: ConvRow, msgCount: number): Promise<void> 
 async function analyzeOne(conv: ConvRow): Promise<boolean> {
   const { data: msgs } = await supabase
     .from('messages')
-    .select('direction, kind, body, created_at')
+    .select('direction, kind, body, created_at, media_mime')
     .eq('conversation_id', conv.id)
     .order('created_at', { ascending: true })
     .limit(150);
@@ -200,10 +204,17 @@ async function analyzeOne(conv: ConvRow): Promise<boolean> {
   for (const m of list) {
     const who = m.direction === 'in' ? 'CLIENTE' : 'VENDEDORA';
     let text = (m.body as string | null)?.trim() ?? '';
-    if (m.kind === 'audio')         { text = '[áudio]'; audioCount++; }
-    else if (m.kind === 'image')      text = text ? `[imagem] ${text}` : '[imagem]';
-    else if (m.kind === 'video')      text = '[vídeo]';
-    else if (m.kind === 'document')   text = '[documento]';
+    // A ingestão às vezes grava mídia como kind='text' (mas com media_mime
+    // certo) — o mime corrige o tipo pra o áudio/imagem não sumir da análise.
+    const mime = (m.media_mime as string | null) ?? '';
+    const ek = mime.startsWith('audio/') ? 'audio'
+      : mime.startsWith('image/') ? 'image'
+      : mime.startsWith('video/') ? 'video'
+      : (m.kind as string);
+    if (ek === 'audio')         { text = '[áudio]'; audioCount++; }
+    else if (ek === 'image')      text = text ? `[imagem] ${text}` : '[imagem]';
+    else if (ek === 'video')      text = '[vídeo]';
+    else if (ek === 'document')   text = '[documento]';
     else if (['sticker', 'system', 'reaction'].includes(m.kind as string)) continue;
     if (!text) continue;
     const hora = new Date(m.created_at as string).toLocaleString('pt-BR', {
@@ -236,10 +247,23 @@ async function analyzeOne(conv: ConvRow): Promise<boolean> {
     return true;
   }
 
-  // Nível 2 — análise profunda (modelo forte)
-  const out = await callJson(MODEL_DEEP, SYSTEM_PROMPT, transcript);
+  // Nível 2 — análise profunda (modelo forte). Passa o CONTEXTO temporal pra
+  // o modelo não confundir "cliente ainda não respondeu (recente)" com "esfriou".
+  const horasDesde = (Date.now() - new Date(conv.last_message_at).getTime()) / 3_600_000;
+  const tempoTxt = horasDesde < 1 ? 'menos de 1 hora'
+    : horasDesde < 48 ? `cerca de ${Math.round(horasDesde)} horas`
+    : `cerca de ${Math.round(horasDesde / 24)} dias`;
+  const userMsg = `CONTEXTO: no momento desta análise, a última mensagem da conversa foi há ${tempoTxt}.\n\n${transcript}`;
+  const out = await callJson(MODEL_DEEP, SYSTEM_PROMPT, userMsg);
   const DESFECHOS = ['vendido', 'agendou', 'negociando', 'em_andamento', 'esfriou', 'perdido', 'indefinido'];
   const nota = Number(out.nota_geral);
+
+  // Guardrail: conversa recente não pode estar "esfriou" — o silêncio ainda não
+  // aconteceu. Rebaixa pra "em_andamento". (perdido fica a cargo do prompt, que
+  // exige sinal explícito.) Ajustável por FRESCO_MAX_H.
+  const FRESCO_H = Number(Deno.env.get('FRESCO_MAX_H') ?? 4);
+  let desf = DESFECHOS.includes(out.desfecho as string) ? (out.desfecho as string) : 'indefinido';
+  if (desf === 'esfriou' && horasDesde < FRESCO_H) desf = 'em_andamento';
 
   const { error } = await supabase.from('conversation_analysis').upsert({
     conversation_id:        conv.id,
@@ -256,10 +280,10 @@ async function analyzeOne(conv: ConvRow): Promise<boolean> {
     fechamento_count:       Number(out.fechamento_count ?? 0),
     followup_oportunidade:  Boolean(out.followup_oportunidade),
     followup_feito:         Boolean(out.followup_feito),
-    estoque_situacao:       ['nao_ocorreu', 'ponte', 'negativa_seca'].includes(out.estoque_situacao) ? out.estoque_situacao : 'nao_ocorreu',
+    estoque_situacao:       ['nao_ocorreu', 'ponte', 'negativa_seca'].includes(out.estoque_situacao as string) ? (out.estoque_situacao as string) : 'nao_ocorreu',
     parcelamento_proativo:  out.parcelamento_proativo === null ? null : Boolean(out.parcelamento_proativo),
     qualificou_antes_preco: out.qualificou_antes_preco === null ? null : Boolean(out.qualificou_antes_preco),
-    desfecho:               DESFECHOS.includes(out.desfecho) ? out.desfecho : 'indefinido',
+    desfecho:               desf,
     nota_geral:             Number.isFinite(nota) ? Math.max(0, Math.min(10, Math.round(nota))) : null,
     objecoes:               Array.isArray(out.objecoes) ? out.objecoes : [],
     erros:                  Array.isArray(out.erros) ? out.erros : [],
