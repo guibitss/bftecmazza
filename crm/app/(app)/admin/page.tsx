@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
-import { Users, Building2, MessageSquare, Clock, ChevronRight, UserCheck, Tag, Wifi, UtensilsCrossed } from 'lucide-react';
+import { Users, Building2, MessageSquare, Clock, ChevronRight, UserCheck, Tag, Wifi, UtensilsCrossed, UsersRound } from 'lucide-react';
 
 export default async function AdminHome() {
   const user = await getCurrentUser();
@@ -54,6 +54,14 @@ export default async function AdminHome() {
       icon: UtensilsCrossed,
       title: 'Vendedores',
       desc: 'Configurar horário de almoço por vendedor',
+      available: true,
+      badge: null,
+    },
+    {
+      href: '/admin/equipe',
+      icon: UsersRound,
+      title: 'Contatos da equipe',
+      desc: 'Marcar números de sócios, estoque e colegas para saírem das métricas',
       available: true,
       badge: null,
     },
