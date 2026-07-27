@@ -480,8 +480,8 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
         </div>
       )}
 
-      {/* Balão de sugestão da IA */}
-      {(suggesting || suggestion || sugErr) && (
+      {/* Sugestão de resposta da IA — chip discreto que vira balão ao clicar */}
+      {(suggesting || suggestion || sugErr) ? (
         <div className="mx-3 mb-2 rounded-xl border border-border bg-surface overflow-hidden animate-fade-in">
           <div className="px-3 py-1.5 hairline-b flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-fg-subtle">
             <Sparkles size={11} /> Sugestão da IA
@@ -528,6 +528,16 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
             )}
           </div>
         </div>
+      ) : (
+        <div className="px-3 pb-2">
+          <button
+            type="button"
+            onClick={fetchSuggestion}
+            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-border bg-surface text-[11.5px] text-fg-muted hover:text-fg hover:border-border-strong transition-colors"
+          >
+            <Sparkles size={12} /> Sugerir resposta
+          </button>
+        </div>
       )}
 
       {/* Linha do composer */}
@@ -572,17 +582,6 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
             }}
           />
         </div>
-
-        {/* Sugestão da IA */}
-        <button
-          type="button"
-          onClick={fetchSuggestion}
-          disabled={isBusy || recording || suggesting}
-          title="Sugerir resposta (IA)"
-          className="p-2 rounded-lg text-fg-muted hover:text-fg hover:bg-surface-muted transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
-        >
-          <Sparkles size={18} strokeWidth={1.75} />
-        </button>
 
         <button
           type="button"

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { Bot, X, Send, Mic, ImagePlus, Maximize2, Minimize2, Square, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
@@ -16,6 +17,10 @@ const SUGESTOES = [
 ];
 
 export function SalesCoach() {
+  const pathname = usePathname();
+  // No inbox o composer ocupa o canto inferior direito — sobe o botão pra não
+  // cobrir o "enviar".
+  const onInbox = pathname?.startsWith('/inbox') ?? false;
   const [open, setOpen] = useState(false);
   const [full, setFull] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -114,7 +119,10 @@ export function SalesCoach() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-50 w-14 h-14 rounded-full bg-ink-950 dark:bg-white text-white dark:text-ink-950 shadow-lg grid place-items-center hover:scale-105 transition-transform"
+          className={cn(
+            'fixed right-5 z-50 w-14 h-14 rounded-full bg-ink-950 dark:bg-white text-white dark:text-ink-950 shadow-lg grid place-items-center hover:scale-105 transition-transform',
+            onInbox ? 'bottom-28' : 'bottom-5',
+          )}
           aria-label="Abrir coach de vendas"
         >
           <Bot size={24} strokeWidth={1.75} />
