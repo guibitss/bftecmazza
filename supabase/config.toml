@@ -34,3 +34,6 @@ verify_jwt = false
 
 [functions.sales-coach]
 verify_jwt = false
+
+[functions.suggest-reply]
+verify_jwt = false

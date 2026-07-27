@@ -76,6 +76,12 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
 
+  // Sugestão de resposta da IA (balão)
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [sugErr, setSugErr] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   // Arquivo pendente de envio (depois de selecionar, antes de confirmar)
   const [pendingFile, setPendingFile] = useState<{
     file: File; kind: MsgKind; preview?: string;
@@ -103,6 +109,9 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     setError(null);
     setPendingFile(null);
     setViaSession(defaultSession);
+    setSuggestion(null);
+    setSugErr(null);
+    setSuggesting(false);
     // Para gravação em andamento ao trocar de conversa
     if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null; }
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -199,6 +208,45 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
   }
+
+  // ─── Sugestão de resposta da IA ─────────────────────────────────────────────
+  async function fetchSuggestion() {
+    if (suggesting) return;
+    setSuggesting(true);
+    setSugErr(null);
+    setSuggestion(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('sessão expirada');
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/suggest-reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ conversation_id: convId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setSuggestion(data.suggestion as string);
+    } catch (err) {
+      setSugErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  function useSuggestion() {
+    if (!suggestion) return;
+    setText(suggestion);
+    setSuggestion(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  // Reajusta a altura do textarea quando o texto muda (inclui preencher via sugestão)
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 128) + 'px';
+  }, [text]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -432,6 +480,56 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
         </div>
       )}
 
+      {/* Balão de sugestão da IA */}
+      {(suggesting || suggestion || sugErr) && (
+        <div className="mx-3 mb-2 rounded-xl border border-border bg-surface overflow-hidden animate-fade-in">
+          <div className="px-3 py-1.5 hairline-b flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-fg-subtle">
+            <Sparkles size={11} /> Sugestão da IA
+            <button
+              type="button"
+              onClick={() => { setSuggestion(null); setSugErr(null); }}
+              className="ml-auto p-0.5 rounded text-fg-subtle hover:text-fg transition-colors"
+              title="Dispensar"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <div className="px-3 py-2.5">
+            {suggesting ? (
+              <div className="text-[12.5px] text-fg-subtle flex items-center gap-2">
+                <svg className="animate-spin" width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                </svg>
+                escrevendo uma sugestão…
+              </div>
+            ) : sugErr ? (
+              <div className="text-[12.5px] text-red-700 dark:text-red-300">Não consegui sugerir: {sugErr}</div>
+            ) : (
+              <>
+                <div className="text-[13px] whitespace-pre-wrap leading-snug text-fg">{suggestion}</div>
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={useSuggestion}
+                    className="h-7 px-3 rounded-lg bg-ink-950 dark:bg-white text-white dark:text-ink-950 text-[12px] font-medium hover:opacity-80 transition-opacity"
+                  >
+                    Usar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={fetchSuggestion}
+                    className="h-7 px-3 rounded-lg border border-border text-[12px] text-fg-muted hover:text-fg hover:border-border-strong transition-colors"
+                  >
+                    Refazer
+                  </button>
+                  <span className="text-[10.5px] text-fg-subtle">revise antes de enviar</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Linha do composer */}
       <div className="px-3 pb-3 flex items-end gap-2">
         {/* Paperclip — abre seletor de arquivo */}
@@ -447,6 +545,7 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
 
         <div className="flex-1 min-w-0">
           <textarea
+            ref={textareaRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
@@ -473,6 +572,17 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
             }}
           />
         </div>
+
+        {/* Sugestão da IA */}
+        <button
+          type="button"
+          onClick={fetchSuggestion}
+          disabled={isBusy || recording || suggesting}
+          title="Sugerir resposta (IA)"
+          className="p-2 rounded-lg text-fg-muted hover:text-fg hover:bg-surface-muted transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+        >
+          <Sparkles size={18} strokeWidth={1.75} />
+        </button>
 
         <button
           type="button"
