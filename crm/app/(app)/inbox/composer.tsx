@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { InboxAccess } from '@/lib/auth';
 import { createClient } from '@/lib/supabase/client';
+import { dbSchema } from '@/lib/supabase/schema';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -220,7 +221,11 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
       if (!session) throw new Error('sessão expirada');
       const res = await fetch(`${SUPABASE_URL}/functions/v1/suggest-reply`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+          ...(dbSchema() ? { 'x-app-schema': dbSchema()! } : {}),
+        },
         body: JSON.stringify({ conversation_id: convId }),
       });
       const data = await res.json().catch(() => ({}));

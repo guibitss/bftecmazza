@@ -24,9 +24,18 @@ const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
 const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type, x-client-info, apikey',
+  'Access-Control-Allow-Headers': 'authorization, content-type, x-client-info, apikey, x-app-schema',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
+
+// Cliente service-role no schema pedido (demo lê dados fictícios isolados).
+function dbFor(req: Request): SupabaseClient {
+  return req.headers.get('x-app-schema') === 'demo'
+    ? createClient(SUPABASE_URL, SERVICE_KEY, { db: { schema: 'demo' } }) as unknown as SupabaseClient
+    : admin;
+}
+
+interface ConvRow { id: number; store_id: number; customer_name: string | null }
 
 const SYSTEM = `Você é a VENDEDORA de uma loja de iPhones (Apple) atendendo um cliente pelo WhatsApp.
 Com base na conversa, escreva a PRÓXIMA mensagem para enviar AO CLIENTE — pronta pra copiar e colar.
@@ -59,16 +68,33 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ ok: false, error: 'bad json' }, 400); }
   if (!body.conversation_id) return json({ ok: false, error: 'missing conversation_id' }, 400);
 
-  // Acesso: com RLS o usuário só enxerga conversas que pode ver.
-  const { data: conv, error: convErr } = await userClient
-    .from('conversations')
-    .select('id, store_id, customer_name')
-    .eq('id', body.conversation_id)
-    .maybeSingle();
-  if (convErr || !conv) return json({ ok: false, error: 'sem acesso a esta conversa' }, 403);
+  const isDemo = req.headers.get('x-app-schema') === 'demo';
+  const db = dbFor(req);
+
+  // Acesso à conversa:
+  // - produção: RLS (userClient) — o usuário só enxerga o que pode ver;
+  // - demo: dados fictícios num schema isolado (login único admin). O RLS da
+  //   demo não é replicado, então validamos que é um app_user do demo e lemos
+  //   a conversa via service role no schema demo.
+  let conv: ConvRow | null = null;
+  if (isDemo) {
+    const { data: prof } = await db.from('app_users').select('id').eq('id', user.id).maybeSingle();
+    if (!prof) return json({ ok: false, error: 'sem acesso' }, 403);
+    const { data } = await db
+      .from('conversations').select('id, store_id, customer_name')
+      .eq('id', body.conversation_id).maybeSingle();
+    conv = (data ?? null) as ConvRow | null;
+  } else {
+    const { data, error: convErr } = await userClient
+      .from('conversations').select('id, store_id, customer_name')
+      .eq('id', body.conversation_id).maybeSingle();
+    if (convErr) return json({ ok: false, error: 'sem acesso a esta conversa' }, 403);
+    conv = (data ?? null) as ConvRow | null;
+  }
+  if (!conv) return json({ ok: false, error: 'sem acesso a esta conversa' }, 403);
 
   try {
-    const { data: msgs } = await admin
+    const { data: msgs } = await db
       .from('messages')
       .select('direction, kind, body, created_at')
       .eq('conversation_id', conv.id)

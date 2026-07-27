@@ -21,18 +21,28 @@
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const supabase = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-);
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')!;
 const MODEL = Deno.env.get('OPENAI_MODEL_DEEP') ?? 'gpt-4o-mini';
 
 const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type, apikey',
+  'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-app-schema',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
+
+type Db = typeof supabase;
+
+// Cliente no schema pedido pelo front. Demo lê do schema 'demo' (dados
+// fictícios, isolados); qualquer outra coisa cai em produção (public).
+function dbFor(req: Request): Db {
+  if (req.headers.get('x-app-schema') === 'demo') {
+    return createClient(SUPABASE_URL, SERVICE_KEY, { db: { schema: 'demo' } }) as unknown as Db;
+  }
+  return supabase;
+}
 
 const SYSTEM = `Você é um COACH ESPECIALISTA EM VENDAS de varejo Apple (iPhones, troca, acessórios), falando com a equipe de uma loja pelo CRM.
 Seu papel: dar orientação prática, direta e acionável para o vendedor vender mais e melhor. Fale como um mentor experiente de loja, em português do Brasil, tom próximo mas profissional. Nada de textão — vá ao ponto, com passos concretos e exemplos de frases prontas que ele pode copiar e usar.
@@ -57,21 +67,21 @@ interface Caller {
  * Descobre a identidade do chamador pelo token de login. Retorna null se o
  * token for inválido / usuário inativo (a função responde 401).
  */
-async function resolveCaller(authHeader: string | null): Promise<Caller | null> {
+async function resolveCaller(db: Db, authHeader: string | null): Promise<Caller | null> {
   const token = (authHeader ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return null;
 
-  const { data: userData, error } = await supabase.auth.getUser(token);
+  const { data: userData, error } = await db.auth.getUser(token);
   if (error || !userData?.user) return null;
   const uid = userData.user.id;
 
-  const { data: profile } = await supabase
+  const { data: profile } = await db
     .from('app_users')
     .select('name, is_admin, manager_of_store_id, active, status')
     .eq('id', uid).maybeSingle();
   if (!profile || !profile.active || profile.status !== 'approved') return null;
 
-  const { data: ui } = await supabase
+  const { data: ui } = await db
     .from('user_inboxes')
     .select('can_send, inboxes:inbox_id(kind, vendor_id)')
     .eq('user_id', uid);
@@ -106,8 +116,8 @@ async function allowedVendorSet(
   return allowed;
 }
 
-async function loadVendors(): Promise<Map<number, { name: string; store_id: number }>> {
-  const { data } = await supabase.from('vendors').select('id, name, store_id');
+async function loadVendors(db: Db): Promise<Map<number, { name: string; store_id: number }>> {
+  const { data } = await db.from('vendors').select('id, name, store_id');
   const m = new Map<number, { name: string; store_id: number }>();
   for (const v of (data ?? []) as Array<{ id: number; name: string; store_id: number }>) {
     m.set(v.id, { name: v.name, store_id: v.store_id });
@@ -141,13 +151,14 @@ async function transcribeBytes(bytes: Uint8Array): Promise<string> {
  * se houver `focus`, restringe a esse único vendedor.
  */
 async function metricsContext(
+  db: Db,
   allowed: Set<number>,
   focus: number | null,
 ): Promise<string> {
   if (allowed.size === 0) return '';
   const from = new Date(Date.now() - 30 * 86400_000).toISOString();
   const to = new Date().toISOString();
-  const { data } = await supabase.rpc('vendor_quality_metrics', { p_from: from, p_to: to });
+  const { data } = await db.rpc('vendor_quality_metrics', { p_from: from, p_to: to });
   let rows = ((data ?? []) as Array<Record<string, unknown>>)
     .filter(r => allowed.has(r.vendor_id as number));
   if (focus) rows = rows.filter(r => r.vendor_id === focus);
@@ -165,8 +176,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
 
-  // Identidade vem do token de login, nunca do corpo.
-  const caller = await resolveCaller(req.headers.get('Authorization'));
+  // Schema (produção ou demo) e identidade — identidade vem do token, nunca do corpo.
+  const db = dbFor(req);
+  const caller = await resolveCaller(db, req.headers.get('Authorization'));
   if (!caller) return json({ error: 'não autenticado' }, 401);
 
   let body: {
@@ -179,7 +191,7 @@ Deno.serve(async (req) => {
   let transcript = '';
 
   try {
-    const vendors = await loadVendors();
+    const vendors = await loadVendors(db);
     const allowed = await allowedVendorSet(caller, vendors);
     const isSupervisor = caller.isAdmin || caller.managerStoreId != null;
 
@@ -213,7 +225,7 @@ Deno.serve(async (req) => {
       if (transcript) history.push({ role: 'user', content: transcript });
     }
 
-    const ctx = await metricsContext(allowed, focus);
+    const ctx = await metricsContext(db, allowed, focus);
 
     const msgs: Array<Record<string, unknown>> = [{ role: 'system', content: SYSTEM + ctx + scopeNote }];
     for (let i = 0; i < history.length; i++) {

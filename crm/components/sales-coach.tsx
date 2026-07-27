@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { Bot, X, Send, Mic, ImagePlus, Maximize2, Minimize2, Square, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { dbSchema } from '@/lib/supabase/schema';
 import { cn } from '@/lib/utils';
 
 interface Msg { role: 'user' | 'assistant'; content: string; image?: string; }
@@ -94,6 +95,7 @@ export function SalesCoach() {
           'Content-Type': 'application/json',
           'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
           'Authorization': `Bearer ${session?.access_token ?? ''}`,
+          ...(dbSchema() ? { 'x-app-schema': dbSchema()! } : {}),
         },
         body: JSON.stringify({
           messages: nextMsgs.map(m => ({ role: m.role, content: m.content })),
