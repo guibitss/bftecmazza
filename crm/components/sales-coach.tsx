@@ -33,9 +33,51 @@ export function SalesCoach() {
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
+  // Botão flutuante arrastável — posição livre (persistida). null = canto padrão.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [msgs, loading]);
+
+  // Carrega a posição salva do botão
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem('coach-fab-pos');
+      if (s) setPos(JSON.parse(s));
+    } catch { /* ignora */ }
+  }, []);
+
+  const FAB = 56; // 14 * 4px
+  function onFabPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
+    const r = e.currentTarget.getBoundingClientRect();
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onFabPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (!d.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    d.moved = true;
+    const x = Math.min(Math.max(8, d.ox + dx), window.innerWidth - FAB - 8);
+    const y = Math.min(Math.max(8, d.oy + dy), window.innerHeight - FAB - 8);
+    setPos({ x, y });
+  }
+  function onFabPointerUp(e: React.PointerEvent<HTMLButtonElement>) {
+    const d = dragRef.current;
+    dragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ok */ }
+    if (d?.moved) {
+      setPos(p => {
+        if (p) { try { localStorage.setItem('coach-fab-pos', JSON.stringify(p)); } catch { /* ok */ } }
+        return p;
+      });
+    } else {
+      setOpen(true); // clique simples abre o painel
+    }
+  }
 
   async function send(text: string, imageB64?: string, audioB64?: string) {
     const userMsg: Msg = { role: 'user', content: text || (imageB64 ? '[imagem]' : '[áudio]'), image: imageB64 ?? undefined };
@@ -118,12 +160,17 @@ export function SalesCoach() {
       {!open && (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onPointerDown={onFabPointerDown}
+          onPointerMove={onFabPointerMove}
+          onPointerUp={onFabPointerUp}
+          style={pos ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' } : undefined}
           className={cn(
-            'fixed right-5 z-50 w-14 h-14 rounded-full bg-ink-950 dark:bg-white text-white dark:text-ink-950 shadow-lg grid place-items-center hover:scale-105 transition-transform',
-            onInbox ? 'bottom-28' : 'bottom-5',
+            'fixed z-50 w-14 h-14 rounded-full bg-ink-950 dark:bg-white text-white dark:text-ink-950 shadow-lg grid place-items-center hover:scale-105 transition-transform touch-none cursor-grab active:cursor-grabbing',
+            !pos && 'right-5',
+            !pos && (onInbox ? 'bottom-28' : 'bottom-5'),
           )}
-          aria-label="Abrir coach de vendas"
+          aria-label="Abrir coach de vendas (arraste para mover)"
+          title="Arraste para mover"
         >
           <Bot size={24} strokeWidth={1.75} />
         </button>
