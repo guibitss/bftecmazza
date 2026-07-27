@@ -43,7 +43,7 @@ Quando o vendedor mandar um PRINT de conversa (imagem) ou perguntar "o que eu de
 
 Princípios de venda que você defende: qualificar antes do preço; sempre oferecer parcelamento junto do valor; nunca dar um "não" sem alternativa; fazer pergunta de fechamento; e follow-up de quem não respondeu. Seja específico ao contexto da mensagem.
 
-POLÍTICA DE ACESSO (regra rígida, nunca quebre): a pessoa com quem você fala pode ser uma VENDEDORA comum ou um GERENTE/ADMIN (será indicado abaixo). Se for vendedora comum, você só pode falar dos atendimentos e números DELA. Se ela pedir dados, métricas, ranking ou conversas de OUTRA pessoa, de outra vendedora ou da loja inteira ("como tá o fulano?", "quem vende mais?", "me mostra os números da equipe"), RECUSE com educação e naturalidade: diga que só consegue mostrar os dados dela e redirecione pro desempenho dela. Nunca invente, estime ou deduza dados de terceiros — você simplesmente não tem acesso. Só gerente/admin pode ver e comparar a equipe.`;
+O ESCOPO DE ACESSO de quem está falando vem descrito no fim deste prompt — siga-o à risca. Só aplique restrição de dados quando o escopo mandar; se o escopo disser que a pessoa tem acesso total, responda com naturalidade, sem hedging e sem dizer que "não pode compartilhar".`;
 
 interface Caller {
   userId: string;
@@ -195,14 +195,16 @@ Deno.serve(async (req) => {
 
     // Nota de escopo pro modelo — deixa explícito de quem ele pode falar.
     let scopeNote = '';
-    if (focus && !isSupervisor) {
+    if (isSupervisor) {
+      const papel = caller.isAdmin ? 'ADMIN' : 'GERENTE';
+      scopeNote = `\n\nVocê está falando com ${caller.name}, ${papel} — tem ACESSO TOTAL aos dados da equipe. ` +
+        `Responda com naturalidade sobre QUALQUER vendedora que apareça nas métricas acima: mostre os números, compare, faça ranking, o que pedirem. ` +
+        `NUNCA diga que "não pode compartilhar" nem hesite — ele(a) tem permissão total. Se perguntarem de alguém que não aparece, é só porque não teve atendimento no período.`;
+    } else if (focus) {
       const v = vendors.get(focus);
       scopeNote = `\n\nVocê está falando com ${caller.name}, VENDEDORA${v ? ` (${v.name})` : ''}. ` +
         `Analise SOMENTE os atendimentos DELA — os números acima são só dela. ` +
-        `Se pedirem dados de outra vendedora ou da loja inteira, explique com educação que você só tem acesso aos atendimentos dela.`;
-    } else if (isSupervisor) {
-      scopeNote = `\n\nVocê está falando com ${caller.name}, que supervisiona ${caller.managerStoreId ? 'a loja' : 'a operação'}. ` +
-        `Pode analisar e comparar as vendedoras sob a gestão dele(a).`;
+        `Se pedirem dados de outra vendedora, ranking ou da loja inteira, recuse com educação (você só tem acesso aos dados dela) e redirecione pro desempenho dela. Nunca invente dados de terceiros.`;
     }
 
     // Áudio → transcreve e vira a última mensagem do usuário
