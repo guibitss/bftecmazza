@@ -17,6 +17,7 @@ import {
   Tag,
   Clock,
   Wifi,
+  MessageSquareText,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { Logo } from '@/components/logo';
@@ -40,6 +41,7 @@ const NAV: NavItem[] = [
   { href: '/metricas',   label: 'Métricas',    icon: BarChart3 },
   { href: '/alertas',    label: 'Alertas',     icon: Bell, managerOnly: true },
   { href: '/etiquetas',  label: 'Etiquetas',   icon: Tag },
+  { href: '/mensagens',  label: 'Minhas mensagens', icon: MessageSquareText },
   { href: '/horarios',   label: 'Horários',    icon: Clock },
   { href: '/conexoes',   label: 'Conexões',    icon: Wifi },
   { href: '/admin',      label: 'Admin',       icon: Settings, adminOnly: true },

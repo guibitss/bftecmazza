@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import {
   Send, Paperclip, Mic, Clock, Lock, ChevronDown, Sparkles, Headset,
   User as UserIcon, Check, AlertCircle, X, Square, Image as ImageIcon,
-  FileText, Film, Music,
+  FileText, Film, Music, MessageSquareText,
 } from 'lucide-react';
 import type { InboxAccess } from '@/lib/auth';
 import { createClient } from '@/lib/supabase/client';
@@ -82,6 +82,11 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [sugErr, setSugErr] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Mensagens rápidas (respostas prontas do login)
+  const [quickReplies, setQuickReplies] = useState<{ id: string; title: string | null; body: string }[]>([]);
+  const [showQR, setShowQR] = useState(false);
+  const qrRef = useRef<HTMLDivElement>(null);
 
   // Arquivo pendente de envio (depois de selecionar, antes de confirmar)
   const [pendingFile, setPendingFile] = useState<{
@@ -252,6 +257,32 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, 128) + 'px';
   }, [text]);
+
+  // Carrega mensagens rápidas do login (RLS filtra pras próprias)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('quick_replies').select('id, title, body').order('sort').order('created_at');
+      if (!cancelled) setQuickReplies((data ?? []) as { id: string; title: string | null; body: string }[]);
+    })();
+    return () => { cancelled = true; };
+  }, [supabase]);
+
+  // Fecha o seletor de mensagens rápidas ao clicar fora
+  useEffect(() => {
+    if (!showQR) return;
+    function onDown(e: MouseEvent) {
+      if (qrRef.current && !qrRef.current.contains(e.target as Node)) setShowQR(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [showQR]);
+
+  function insertQuickReply(body: string) {
+    setText(t => (t.trim() ? `${t}${t.endsWith('\n') ? '' : '\n'}${body}` : body));
+    setShowQR(false);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -557,6 +588,42 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
         >
           <Paperclip size={18} strokeWidth={1.75} />
         </button>
+
+        {/* Mensagens rápidas */}
+        {quickReplies.length > 0 && (
+          <div className="relative" ref={qrRef}>
+            <button
+              type="button"
+              onClick={() => setShowQR(v => !v)}
+              disabled={isBusy || recording}
+              title="Mensagens rápidas"
+              className="p-2 rounded-lg text-fg-muted hover:text-fg hover:bg-surface-muted transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              <MessageSquareText size={18} strokeWidth={1.75} />
+            </button>
+            {showQR && (
+              <div className="absolute bottom-full left-0 mb-2 z-30 w-72 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface shadow-lg animate-fade-in">
+                <div className="px-3 py-2 hairline-b text-[10px] uppercase tracking-[0.14em] text-fg-subtle sticky top-0 bg-surface">
+                  Mensagens rápidas
+                </div>
+                <ul className="py-1">
+                  {quickReplies.map(qr => (
+                    <li key={qr.id}>
+                      <button
+                        type="button"
+                        onClick={() => insertQuickReply(qr.body)}
+                        className="w-full text-left px-3 py-2 hover:bg-surface-muted transition-colors"
+                      >
+                        {qr.title && <div className="text-[12px] font-semibold truncate">{qr.title}</div>}
+                        <div className="text-[12.5px] text-fg-muted line-clamp-2 leading-snug">{qr.body}</div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex-1 min-w-0">
           <textarea
