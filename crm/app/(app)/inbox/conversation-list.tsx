@@ -9,6 +9,8 @@ import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon } from 
 import { Avatar } from '@/components/avatar';
 import { cn } from '@/lib/utils';
 
+interface LabelChip { id: string; name: string; color: string; }
+
 export interface ConvRow {
   id: number;
   inbox_id: number;
@@ -20,6 +22,7 @@ export interface ConvRow {
   unread_count: number;
   status: string;
   avatar_url: string | null;
+  conversation_labels?: { labels: LabelChip | null }[];
 }
 
 interface Props {
@@ -48,7 +51,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
       try {
         const { data, error } = await supabase
           .from('conversations')
-          .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url')
+          .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url, conversation_labels(labels(id, name, color))')
           .eq('inbox_id', inbox.inboxId)
           .order('last_message_at', { ascending: false })
           .limit(1500);
@@ -155,6 +158,8 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
               const active = c.id === selectedConvId;
               const hasUnread = c.unread_count > 0;
               const displayName = c.customer_name ?? c.customer_phone ?? c.waha_id;
+              const labels = (c.conversation_labels ?? [])
+                .map(x => x.labels).filter((l): l is LabelChip => !!l);
               return (
                 <li key={c.id}>
                   <button
@@ -196,6 +201,26 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
                           </span>
                         )}
                       </div>
+
+                      {/* Etiquetas no cantinho */}
+                      {labels.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                          {labels.slice(0, 4).map(l => (
+                            <span
+                              key={l.id}
+                              className="inline-flex items-center gap-1 max-w-[120px] px-1.5 py-0.5 rounded-md text-[10px] font-medium leading-none truncate"
+                              style={{ backgroundColor: `${l.color}22`, color: l.color }}
+                              title={l.name}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: l.color }} />
+                              <span className="truncate">{l.name}</span>
+                            </span>
+                          ))}
+                          {labels.length > 4 && (
+                            <span className="text-[10px] text-fg-subtle">+{labels.length - 4}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </button>
                 </li>
