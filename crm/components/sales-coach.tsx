@@ -17,6 +17,16 @@ const SUGESTOES = [
   'Me dá um script de fechamento',
 ];
 
+const FAB_SIZE = 56; // 14 * 4px
+
+// Mantém a posição do botão dentro da viewport (evita ele "sumir" fora da tela
+// quando foi arrastado pra uma borda ou a janela ficou menor).
+function clampFab(p: { x: number; y: number }): { x: number; y: number } {
+  const maxX = Math.max(8, window.innerWidth - FAB_SIZE - 8);
+  const maxY = Math.max(8, window.innerHeight - FAB_SIZE - 8);
+  return { x: Math.min(Math.max(8, p.x), maxX), y: Math.min(Math.max(8, p.y), maxY) };
+}
+
 export function SalesCoach() {
   const pathname = usePathname();
   // No inbox o composer ocupa o canto inferior direito — sobe o botão pra não
@@ -42,15 +52,23 @@ export function SalesCoach() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [msgs, loading]);
 
-  // Carrega a posição salva do botão
+  // Carrega a posição salva do botão, já garantindo que fica dentro da tela
   useEffect(() => {
     try {
       const s = localStorage.getItem('coach-fab-pos');
-      if (s) setPos(JSON.parse(s));
+      if (!s) return;
+      const p = JSON.parse(s);
+      if (p && typeof p.x === 'number' && typeof p.y === 'number') setPos(clampFab(p));
     } catch { /* ignora */ }
   }, []);
 
-  const FAB = 56; // 14 * 4px
+  // Se a janela mudar de tamanho, reancora o botão pra não sair da viewport
+  useEffect(() => {
+    function onResize() { setPos(p => (p ? clampFab(p) : p)); }
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   function onFabPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
     const r = e.currentTarget.getBoundingClientRect();
     dragRef.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false };
@@ -62,9 +80,7 @@ export function SalesCoach() {
     const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
     if (!d.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
     d.moved = true;
-    const x = Math.min(Math.max(8, d.ox + dx), window.innerWidth - FAB - 8);
-    const y = Math.min(Math.max(8, d.oy + dy), window.innerHeight - FAB - 8);
-    setPos({ x, y });
+    setPos(clampFab({ x: d.ox + dx, y: d.oy + dy }));
   }
   function onFabPointerUp(e: React.PointerEvent<HTMLButtonElement>) {
     const d = dragRef.current;
