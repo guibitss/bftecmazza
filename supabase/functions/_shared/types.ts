@@ -56,6 +56,7 @@ export interface MessageBufferRow {
   phone:             string;
   conversation_data: ConversationContext;
   store_id:          number;
+  attempts?:         number;   // tentativas já feitas (retry em falha)
 }
 
 export interface ChatMessage {

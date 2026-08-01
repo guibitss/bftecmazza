@@ -29,6 +29,98 @@ const supabase = createClient(
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+// Rede de segurança: o pop é destrutivo (DELETE...RETURNING). Se o
+// processamento falhar depois, a mensagem do cliente sumia em silêncio — foi
+// assim que a OpenAI sem créditos derrubou o atendimento por 6h sem ninguém
+// perceber. Agora devolvemos ao buffer com backoff e, esgotadas as tentativas,
+// guardamos em failed_messages e avisamos a loja.
+const MAX_ATTEMPTS = 3;
+const BACKOFF_SECONDS = [60, 300, 900];      // 1min, 5min, 15min
+const ALERT_THROTTLE_MS = 30 * 60 * 1000;    // no máx 1 aviso por loja a cada 30min
+
+/**
+ * Falha ao processar: devolve ao buffer pra nova tentativa ou, se já tentou
+ * demais, registra em failed_messages e alerta. Nunca lança.
+ */
+async function handleFailure(row: MessageBufferRow, stage: string, err: unknown): Promise<void> {
+  const attempts = (row.attempts ?? 0) + 1;
+  const detail = `${stage}: ${err instanceof Error ? err.message : String(err)}`;
+  const storeId = row.store_id ?? null;
+  try {
+    if (attempts < MAX_ATTEMPTS) {
+      const delay = BACKOFF_SECONDS[Math.min(attempts - 1, BACKOFF_SECONDS.length - 1)];
+      const { error } = await supabase.rpc('requeue_message_buffer', {
+        p_chat_id:           row.chat_id,
+        p_messages:          row.messages,
+        p_phone:             row.phone,
+        p_conversation_data: row.conversation_data,
+        p_store_id:          storeId,
+        p_attempts:          attempts,
+        p_delay_seconds:     delay,
+      });
+      if (error) console.error('requeue error:', error);
+      else console.warn(`requeue ${row.chat_id} (tentativa ${attempts}/${MAX_ATTEMPTS}, +${delay}s) — ${detail}`);
+      return;
+    }
+
+    // Esgotou: guarda pra auditoria/reprocesso e avisa
+    const { error } = await supabase.rpc('record_failed_message', {
+      p_chat_id:           row.chat_id,
+      p_phone:             row.phone,
+      p_store_id:          storeId,
+      p_messages:          row.messages,
+      p_conversation_data: row.conversation_data,
+      p_attempts:          attempts,
+      p_error:             detail,
+    });
+    if (error) console.error('record_failed_message error:', error);
+    console.error(`DESISTINDO de ${row.chat_id} após ${attempts} tentativas — ${detail}`);
+    await alertStore(storeId, detail);
+  } catch (e) {
+    console.error('handleFailure:', e);
+  }
+}
+
+/**
+ * Avisa a loja no WhatsApp que mensagens estão falhando (throttled), pra ninguém
+ * descobrir depois de horas que o atendimento parou.
+ */
+async function alertStore(storeId: number | null, detail: string): Promise<void> {
+  if (!storeId) return;
+  try {
+    const { data: store } = await supabase
+      .from('stores')
+      .select('slug, support_notify_chat, bot_session, waha_url, ai_alert_at')
+      .eq('id', storeId).maybeSingle();
+    if (!store?.support_notify_chat) return;
+
+    const last = store.ai_alert_at ? new Date(store.ai_alert_at as string).getTime() : 0;
+    if (Date.now() - last < ALERT_THROTTLE_MS) return;   // já avisou há pouco
+
+    const { count } = await supabase
+      .from('failed_messages')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', new Date(Date.now() - 3600_000).toISOString());
+
+    const dica = detail.includes('429') || detail.toLowerCase().includes('credit')
+      ? '\n\n💳 Parece crédito da OpenAI. Recarregue em platform.openai.com/settings/organization/billing'
+      : '';
+
+    await sendText(
+      store.support_notify_chat as string,
+      `🚨 *IA não está respondendo* (${store.slug})\n\n` +
+      `${count ?? 1} mensagem(ns) de cliente falharam na última hora.\n` +
+      `Erro: ${detail.slice(0, 160)}${dica}\n\n` +
+      `_As mensagens ficaram salvas e podem ser reprocessadas._`,
+      store.bot_session as string,
+      store.waha_url as string,
+    );
+    await supabase.from('stores').update({ ai_alert_at: new Date().toISOString() }).eq('id', storeId);
+  } catch (e) {
+    console.error('alertStore:', e);
+  }
+}
+
 Deno.serve(async (req) => {
   let chatId: string | undefined;
 
@@ -90,8 +182,7 @@ async function processRow(row: MessageBufferRow) {
   try {
     store = await loadStoreById(supabase, storeId);
   } catch (err) {
-    console.error(`loadStore(${storeId}) error:`, err);
-    return;
+    return handleFailure(row, 'loadStore', err);
   }
 
   let fullMessage = Array.isArray(row.messages)
@@ -114,8 +205,7 @@ async function processRow(row: MessageBufferRow) {
       const buffer = await downloadAttachment(audioUrl);
       fullMessage = await transcribeAudio(buffer);
     } catch (err) {
-      console.error('Deferred transcription error:', err);
-      return;
+      return handleFailure(row, 'transcrição', err);
     }
   } else {
     const imageMatch = fullMessage.match(/^__IMAGE:(.+?)__:(.+)$/);
@@ -125,8 +215,7 @@ async function processRow(row: MessageBufferRow) {
         const buffer = await downloadAttachment(imageUrl);
         fullMessage = await describeImage(buffer, mime);
       } catch (err) {
-        console.error('Deferred vision error:', err);
-        return;
+        return handleFailure(row, 'visão', err);
       }
     }
   }
@@ -135,8 +224,9 @@ async function processRow(row: MessageBufferRow) {
   try {
     output = await runSecretaria(fullMessage, history, store.system_prompt);
   } catch (err) {
-    console.error(`Secretária error (${row.chat_id}):`, err);
-    return;
+    // Caso mais comum e mais grave: OpenAI fora (sem crédito, rate limit,
+    // timeout). Reenfileira em vez de descartar o lead.
+    return handleFailure(row, 'IA', err);
   }
 
   const updatedHistory: ChatMessage[] = [
@@ -153,8 +243,30 @@ async function processRow(row: MessageBufferRow) {
     );
   if (memErr) console.error('Memory upsert error:', memErr);
 
-  await sendText(ctx.waha_id, output.mensagem, store.bot_session, store.waha_url)
-    .catch(err => console.error('sendText error:', err));
+  // Envio: se falhar, a memória já registrou como respondido e o cliente ficaria
+  // sem nada. Tenta de novo uma vez e, se ainda falhar, avisa a loja (não
+  // reenfileira: a IA geraria outra resposta e duplicaria o histórico).
+  try {
+    await sendText(ctx.waha_id, output.mensagem, store.bot_session, store.waha_url);
+  } catch (err1) {
+    console.warn(`sendText falhou (${row.chat_id}), tentando de novo:`, err1);
+    await new Promise(r => setTimeout(r, 1500));
+    try {
+      await sendText(ctx.waha_id, output.mensagem, store.bot_session, store.waha_url);
+    } catch (err2) {
+      console.error(`sendText falhou 2x (${row.chat_id}):`, err2);
+      await supabase.rpc('record_failed_message', {
+        p_chat_id:           row.chat_id,
+        p_phone:             row.phone,
+        p_store_id:          storeId,
+        p_messages:          row.messages,
+        p_conversation_data: row.conversation_data,
+        p_attempts:          (row.attempts ?? 0) + 1,
+        p_error:             `envio: ${err2 instanceof Error ? err2.message : String(err2)}`,
+      }).then(({ error }: { error: unknown }) => { if (error) console.error('record:', error); });
+      await alertStore(storeId, `resposta gerada mas não entregue: ${err2 instanceof Error ? err2.message : String(err2)}`);
+    }
+  }
 
   await resetChatwootTyping(ctx.id_conta, ctx.id_conversa)
     .catch((err: unknown) => console.error('resetTyping error:', err));
