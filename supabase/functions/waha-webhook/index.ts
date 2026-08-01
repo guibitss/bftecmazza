@@ -4,8 +4,11 @@
  * Recebe eventos diretos do WAHA (configurado por sessão) e ingere
  * em conversations + messages.
  *
- * MODO SHADOW: por enquanto NÃO chama process-messages — apenas
- * armazena pra validar a migração paralela do Chatwoot.
+ * INGESTÃO POR LOJA (stores.ingest_source):
+ *   - 'chatwoot' (padrão): modo shadow — só grava, quem aciona a IA é a
+ *     chatwoot-webhook. Comportamento histórico, inalterado.
+ *   - 'waha': ingestão direta — além de gravar, enfileira no message_buffer
+ *     e a IA responde pelo process-messages (sem depender do Chatwoot).
  *
  * Eventos suportados:
  *   - message / message.any  → grava nova mensagem
@@ -175,8 +178,138 @@ async function ingestMessage(body: WahaPayload) {
   });
 
   // Ignora duplicata silenciosamente (idempotência)
-  if (error && !String(error.message).includes('duplicate')) {
+  const isDuplicate = error != null && String(error.message).includes('duplicate');
+  if (error && !isDuplicate) {
     console.error('insert message error:', error);
+  }
+
+  // ── Ingestão direta (loja migrada do Chatwoot) ──────────────────────────
+  // Só para lead novo do cliente na caixa da IA, sem duplicata, quando a loja
+  // está em ingest_source='waha'. Enfileira no buffer → process-messages responde.
+  if (!error && !fromMe && role === 'ai') {
+    await maybeEnqueueForAi({
+      storeId, chatId, conversationId, bodyText, kind,
+      mediaUrl, mediaMime, customerName, customerPhone,
+    });
+  }
+}
+
+/**
+ * Enfileira a mensagem do cliente pro process-messages quando a loja usa
+ * ingestão direta pelo WAHA. Replica as travas da chatwoot-webhook:
+ *  - loja precisa estar em ingest_source='waha';
+ *  - número interno (vendedora/suporte usando como bloco de notas) → ignora;
+ *  - sentinela anti-loop 👥 → ignora;
+ *  - conversa já entregue à equipe (transfer_locks) → a IA não atropela o humano.
+ */
+async function maybeEnqueueForAi(o: {
+  storeId: number; chatId: string; conversationId: number;
+  bodyText: string | null; kind: string;
+  mediaUrl: string | null; mediaMime: string | null;
+  customerName: string | null; customerPhone: string | null;
+}): Promise<void> {
+  try {
+    const { data: store } = await supabase
+      .from('stores').select('ingest_source, active').eq('id', o.storeId).maybeSingle();
+    if (!store?.active || store.ingest_source !== 'waha') return;   // loja ainda no Chatwoot
+
+    const phone = o.customerPhone ?? o.chatId;
+
+    if (o.bodyText && o.bodyText.includes('👥')) return;            // anti-loop
+    if (await isInternalNumber(o.storeId, phone, o.chatId)) {
+      console.log(`interno ignorado (waha): ${phone}`);
+      return;
+    }
+
+    // Já transferida pra equipe/suporte: humano no comando, IA não responde.
+    const { data: lock } = await supabase
+      .from('transfer_locks').select('source_id')
+      .eq('source_id', o.chatId).gt('expires_at', new Date().toISOString()).maybeSingle();
+    if (lock) return;
+
+    // Texto pro buffer — mídia usa os marcadores que o process-messages resolve
+    let mensagem = (o.bodyText ?? '').trim();
+    if (!mensagem && o.kind === 'audio' && o.mediaUrl) {
+      mensagem = `__AUDIO__:${o.mediaUrl}`;
+    } else if (!mensagem && o.kind === 'image' && o.mediaUrl) {
+      mensagem = `__IMAGE:${o.mediaMime ?? 'image/jpeg'}__:${o.mediaUrl}`;
+    }
+    if (!mensagem) return;
+
+    // ctx no formato que o process-messages/transfer-flow esperam. Sem Chatwoot,
+    // source_id é o próprio chat (chave do lock) e os ids do Chatwoot vão zerados.
+    const ctx = {
+      id_mensagem: 0,
+      id_conta: 0,
+      id_conversa: o.conversationId,
+      telefone: o.customerPhone ?? '',
+      mensagem,
+      mensagem_de_audio: '',
+      timestamp: Math.floor(Date.now() / 1000),
+      tipo: 'incoming',
+      etiquetas: [] as string[],
+      waha_id: o.chatId,
+      source_id: o.chatId,
+      contact_id: 0,
+      nome: o.customerName ?? '',
+      chat_id: o.chatId,
+    };
+
+    const { error } = await supabase.rpc('upsert_message_buffer', {
+      p_waha_id:           o.chatId,
+      p_message:           mensagem,
+      p_phone:             phone,
+      p_conversation_data: ctx,
+      p_store_id:          o.storeId,
+    });
+    if (error) console.error('upsert_message_buffer (waha):', error);
+  } catch (err) {
+    // Nunca derruba o ingest por causa do enfileiramento
+    console.error('maybeEnqueueForAi:', err);
+  }
+}
+
+// ── Números internos (vendedores + suporte) ─────────────────────────────
+// Mesma lógica da chatwoot-webhook: eles usam a conversa com o número
+// principal como bloco de notas e a IA não pode tentar atendê-los.
+const INTERNAL_TTL_MS = 5 * 60 * 1000;
+const internalCache = new Map<number, { nums: Set<string>; at: number }>();
+
+function phoneVariants(raw: string): string[] {
+  const d = (raw ?? '').replace(/\D/g, '');
+  if (!d) return [];
+  const out = new Set<string>([d]);
+  const m13 = d.match(/^(55)(\d{2})9(\d{8})$/);
+  if (m13) out.add(`${m13[1]}${m13[2]}${m13[3]}`);
+  const m12 = d.match(/^(55)(\d{2})(\d{8})$/);
+  if (m12 && !m12[3].startsWith('9')) out.add(`${m12[1]}${m12[2]}9${m12[3]}`);
+  return [...out];
+}
+
+async function isInternalNumber(storeId: number, telefone: string, wahaId: string): Promise<boolean> {
+  try {
+    let entry = internalCache.get(storeId);
+    if (!entry || Date.now() - entry.at > INTERNAL_TTL_MS) {
+      const [{ data: vendors }, { data: store }, { data: internos }] = await Promise.all([
+        supabase.from('vendors').select('summary_chat').eq('store_id', storeId),
+        supabase.from('stores').select('support_notify_chat').eq('id', storeId).maybeSingle(),
+        supabase.from('internal_contacts').select('phone_norm'),
+      ]);
+      const nums = new Set<string>();
+      for (const v of vendors ?? []) for (const p of phoneVariants(v.summary_chat as string)) nums.add(p);
+      for (const p of phoneVariants((store?.support_notify_chat as string) ?? '')) nums.add(p);
+      for (const c of internos ?? []) for (const p of phoneVariants(c.phone_norm as string)) nums.add(p);
+      entry = { nums, at: Date.now() };
+      internalCache.set(storeId, entry);
+    }
+    if (entry.nums.size === 0) return false;
+    for (const p of [...phoneVariants(telefone), ...phoneVariants(wahaId)]) {
+      if (entry.nums.has(p)) return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('isInternalNumber (waha):', err);
+    return false;   // nunca bloqueia atendimento por falha na checagem
   }
 }
 

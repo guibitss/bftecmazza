@@ -168,6 +168,23 @@ async function handleTransfer(input: TransferFlowInput) {
     audit(src, storeId, tel, 'summary_skipped_no_chat', vendor.name);
   }
 
+  // Conversa entregue à vendedora: estende o lock (o de aquisição dura só 5min,
+  // pra deduplicar). Sem Chatwoot não há etiqueta 'equipe', então é ESTE lock que
+  // diz "tem humano no comando" — a ingestão direta do WAHA não deixa a IA
+  // responder por cima enquanto ele valer.
+  const { error: holdErr } = await supabase
+    .from('transfer_locks')
+    .upsert({
+      source_id:  src,
+      store_id:   storeId,
+      expires_at: new Date(Date.now() + 86400_000).toISOString(),
+      created_at: new Date().toISOString(),
+    }, { onConflict: 'source_id' });
+  if (holdErr) {
+    console.error(`${tag} hold lock error:`, holdErr);
+    audit(src, storeId, tel, 'hold_lock_error', vendor.name, { error: String(holdErr) });
+  }
+
   audit(src, storeId, tel, 'done', vendor.name);
 }
 

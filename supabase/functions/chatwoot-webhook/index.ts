@@ -70,6 +70,12 @@ async function handleWebhook(body: Record<string, unknown>) {
   const store = await loadStoreByInboxId(supabase, inboxId);
   if (!store) return;
 
+  // Loja migrada pra ingestão direta do WAHA: quem enfileira é a waha-webhook.
+  // Ignorar aqui evita resposta DUPLICADA caso o Chatwoot volte a entregar.
+  const { data: src } = await supabase
+    .from('stores').select('ingest_source').eq('id', store.id).maybeSingle();
+  if (src?.ingest_source === 'waha') return;
+
   // Número da própria equipe (vendedor/suporte) escrevendo pro número
   // principal — eles usam a conversa como bloco de notas. A IA não atende
   // e o fluxo de reengajamento também não dispara.
