@@ -61,7 +61,10 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser> => {
         .eq('user_id', user.id),
     ]);
 
-  if (!profile || !profile.active) redirect('/login');
+  // Sessão válida mas sem perfil neste schema (ou desativado): manda pro
+  // /logout, que limpa o cookie. Ir direto pro /login criaria loop — o
+  // middleware veria a sessão ainda válida e devolveria pra cá.
+  if (!profile || !profile.active) redirect('/logout');
   if (profile.status !== 'approved') redirect('/aguardando-aprovacao');
 
   let inboxes: InboxAccess[] = [];
