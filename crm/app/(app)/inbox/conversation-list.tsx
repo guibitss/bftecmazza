@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { isDemo } from '@/lib/supabase/schema';
 import type { InboxAccess } from '@/lib/auth';
 import { timeRelative, initials } from '@/lib/format';
-import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon } from 'lucide-react';
+import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon, Tag, X, Check } from 'lucide-react';
 import { Avatar } from '@/components/avatar';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +42,47 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
   const [convs, setConvs] = useState<ConvRow[] | null>(null);
   const [query, setQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Filtro por etiqueta (ids selecionados) — conversa passa se tem QUALQUER uma
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
+  const [showLabels, setShowLabels] = useState(false);
+  const labelBoxRef = useRef<HTMLDivElement>(null);
+
+  // Etiquetas presentes nesta caixa, com quantas conversas cada uma tem
+  const labelOptions = (() => {
+    const m = new Map<string, LabelChip & { count: number }>();
+    for (const c of convs ?? []) {
+      for (const rel of c.conversation_labels ?? []) {
+        const l = rel.labels;
+        if (!l) continue;
+        const cur = m.get(l.id);
+        if (cur) cur.count++;
+        else m.set(l.id, { ...l, count: 1 });
+      }
+    }
+    return [...m.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  })();
+
+  // Fecha o seletor ao clicar fora
+  useEffect(() => {
+    if (!showLabels) return;
+    function onDown(e: MouseEvent) {
+      if (labelBoxRef.current && !labelBoxRef.current.contains(e.target as Node)) setShowLabels(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [showLabels]);
+
+  // Some com etiquetas que não existem mais na caixa (ex: ao trocar de inbox)
+  useEffect(() => { setLabelFilter(new Set()); setShowLabels(false); }, [inbox.inboxId]);
+
+  function toggleLabel(id: string) {
+    setLabelFilter(prev => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  }
 
   // Fetch inicial
   useEffect(() => {
@@ -91,6 +132,11 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
 
   const Icon = iconForKind(inbox.kind);
   const filtered = (convs ?? []).filter(c => {
+    // Etiqueta primeiro: conversa passa se tem QUALQUER uma das selecionadas
+    if (labelFilter.size > 0) {
+      const ids = (c.conversation_labels ?? []).map(r => r.labels?.id).filter(Boolean) as string[];
+      if (!ids.some(id => labelFilter.has(id))) return false;
+    }
     if (!query) return true;
     const q       = query.toLowerCase().trim();
     if (!q) return true;
@@ -127,23 +173,99 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
         </div>
         {convs && (
           <span className="text-[11px] text-fg-subtle num tabular-nums px-2 py-0.5 rounded-md border border-border">
-            {convs.length}
+            {labelFilter.size > 0 || query ? `${filtered.length}/${convs.length}` : convs.length}
           </span>
         )}
       </div>
 
-      {/* Busca — mais padding lateral, altura confortável */}
-      <div className="px-4 pt-3 pb-2">
-        <div className="relative">
-          <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar por nome, número ou texto…"
-            className="w-full h-10 pl-10 pr-3 rounded-xl border border-border bg-surface text-[13px] placeholder:text-fg-subtle focus:outline-none focus:border-border-strong transition-colors"
-          />
+      {/* Busca + filtro por etiqueta */}
+      <div className="px-4 pt-3 pb-2 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1 min-w-0">
+            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar por nome, número ou texto…"
+              className="w-full h-10 pl-10 pr-3 rounded-xl border border-border bg-surface text-[13px] placeholder:text-fg-subtle focus:outline-none focus:border-border-strong transition-colors"
+            />
+          </div>
+
+          {labelOptions.length > 0 && (
+            <div className="relative shrink-0" ref={labelBoxRef}>
+              <button
+                type="button"
+                onClick={() => setShowLabels(v => !v)}
+                title="Filtrar por etiqueta"
+                className={cn(
+                  'h-10 px-3 rounded-xl border flex items-center gap-1.5 text-[12.5px] transition-colors',
+                  labelFilter.size > 0
+                    ? 'border-ink-950 dark:border-ink-300 bg-surface text-fg'
+                    : 'border-border bg-surface text-fg-muted hover:text-fg hover:border-border-strong',
+                )}
+              >
+                <Tag size={14} strokeWidth={1.75} />
+                {labelFilter.size > 0 && <span className="num">{labelFilter.size}</span>}
+              </button>
+
+              {showLabels && (
+                <div className="absolute right-0 top-full mt-1.5 z-40 w-60 max-h-80 overflow-y-auto rounded-xl border border-border bg-surface shadow-lg animate-fade-in">
+                  <div className="px-3 py-2 hairline-b flex items-center justify-between sticky top-0 bg-surface">
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-fg-subtle">Etiquetas</span>
+                    {labelFilter.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setLabelFilter(new Set())}
+                        className="text-[11px] text-fg-subtle hover:text-fg transition-colors"
+                      >
+                        limpar
+                      </button>
+                    )}
+                  </div>
+                  <ul className="py-1">
+                    {labelOptions.map(l => {
+                      const on = labelFilter.has(l.id);
+                      return (
+                        <li key={l.id}>
+                          <button
+                            type="button"
+                            onClick={() => toggleLabel(l.id)}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-surface-muted transition-colors text-left"
+                          >
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: l.color }} />
+                            <span className="text-[13px] flex-1 truncate">{l.name}</span>
+                            <span className="text-[11px] text-fg-subtle num">{l.count}</span>
+                            {on && <Check size={13} strokeWidth={2.5} className="shrink-0" />}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Etiquetas ativas no filtro */}
+        {labelFilter.size > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {labelOptions.filter(l => labelFilter.has(l.id)).map(l => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => toggleLabel(l.id)}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium hover:opacity-75 transition-opacity"
+                style={{ backgroundColor: `${l.color}22`, color: l.color }}
+                title="Remover do filtro"
+              >
+                {l.name}
+                <X size={10} strokeWidth={2.5} />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Lista — cards com border + espaçamento */}
@@ -151,7 +273,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
         {convs === null ? (
           <ListSkeleton />
         ) : filtered.length === 0 ? (
-          <EmptyState query={query} />
+          <EmptyState query={query} filtering={labelFilter.size > 0} />
         ) : (
           <ul className="flex flex-col gap-1.5 pt-1">
             {filtered.map((c) => {
@@ -249,14 +371,17 @@ function ListSkeleton() {
   );
 }
 
-function EmptyState({ query }: { query: string }) {
+function EmptyState({ query, filtering }: { query: string; filtering?: boolean }) {
+  const msg = filtering
+    ? (query ? 'Nada encontrado com essa busca e etiqueta.' : 'Nenhuma conversa com essa etiqueta.')
+    : (query ? 'Nada encontrado.' : 'Sem conversas ainda.');
   return (
     <div className="grid place-items-center h-full px-6 py-12 text-center">
       <div className="max-w-xs">
-        <InboxIcon size={24} className="mx-auto text-fg-subtle" strokeWidth={1.5} />
-        <p className="mt-3 text-[13px] text-fg-muted">
-          {query ? 'Nada encontrado.' : 'Sem conversas ainda.'}
-        </p>
+        {filtering
+          ? <Tag size={24} className="mx-auto text-fg-subtle" strokeWidth={1.5} />
+          : <InboxIcon size={24} className="mx-auto text-fg-subtle" strokeWidth={1.5} />}
+        <p className="mt-3 text-[13px] text-fg-muted">{msg}</p>
       </div>
     </div>
   );
