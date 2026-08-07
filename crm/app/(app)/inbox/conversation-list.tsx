@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { isDemo } from '@/lib/supabase/schema';
 import type { InboxAccess } from '@/lib/auth';
 import { timeRelative, initials } from '@/lib/format';
-import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon, Tag, X, Check } from 'lucide-react';
+import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon, Tag, X, Check, Archive, ArchiveRestore } from 'lucide-react';
 import { Avatar } from '@/components/avatar';
 import { cn } from '@/lib/utils';
 
@@ -22,6 +22,7 @@ export interface ConvRow {
   unread_count: number;
   status: string;
   avatar_url: string | null;
+  archived_at?: string | null;
   conversation_labels?: { labels: LabelChip | null }[];
 }
 
@@ -48,6 +49,50 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
   // montamos um pedaço, crescendo conforme rola.
   const PAGE = 40;
   const [visible, setVisible] = useState(PAGE);
+
+  // Arquivadas: somem da caixa e ficam numa visão à parte (igual WhatsApp)
+  const [showArchived, setShowArchived] = useState(false);
+  const [swipe, setSwipe] = useState<{ id: number; dx: number } | null>(null);
+  const swipeRef = useRef<{ id: number; x0: number; y0: number; locked: boolean } | null>(null);
+  const ARCHIVE_AT = 96; // arrastar além disso arquiva
+
+  async function toggleArchive(id: number, arquivar: boolean) {
+    setConvs(prev => prev?.map(c => c.id === id
+      ? { ...c, archived_at: arquivar ? new Date().toISOString() : null }
+      : c) ?? prev);
+    await supabase
+      .from('conversations')
+      .update({ archived_at: arquivar ? new Date().toISOString() : null })
+      .eq('id', id);
+  }
+
+  function onSwipeStart(e: React.PointerEvent, id: number) {
+    if (e.pointerType === 'mouse' && e.buttons !== 1) return;
+    swipeRef.current = { id, x0: e.clientX, y0: e.clientY, locked: false };
+  }
+  function onSwipeMove(e: React.PointerEvent) {
+    const s = swipeRef.current;
+    if (!s) return;
+    const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+    // só entra em modo swipe se o gesto for claramente horizontal
+    if (!s.locked) {
+      if (Math.abs(dy) > Math.abs(dx)) { swipeRef.current = null; return; }
+      if (Math.abs(dx) < 12) return;
+      s.locked = true;
+    }
+    setSwipe({ id: s.id, dx: Math.max(-180, Math.min(0, dx)) });
+  }
+  function onSwipeEnd() {
+    const s = swipeRef.current;
+    swipeRef.current = null;
+    if (!s?.locked) { setSwipe(null); return; }
+    const dx = swipe?.dx ?? 0;
+    if (Math.abs(dx) >= ARCHIVE_AT) {
+      const alvo = (convs ?? []).find(c => c.id === s.id);
+      toggleArchive(s.id, !alvo?.archived_at);
+    }
+    setSwipe(null);
+  }
 
   // Filtro por etiqueta (ids selecionados) — conversa passa se tem QUALQUER uma
   const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
@@ -83,7 +128,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
   useEffect(() => { setLabelFilter(new Set()); setShowLabels(false); }, [inbox.inboxId]);
 
   // Volta ao topo da renderização quando muda o que está sendo listado
-  useEffect(() => { setVisible(PAGE); }, [inbox.inboxId, query, labelFilter]);
+  useEffect(() => { setVisible(PAGE); }, [inbox.inboxId, query, labelFilter, showArchived]);
 
   // Cresce a lista ao chegar perto do fim (para quando já mostrou tudo)
   function onScroll(e: React.UIEvent<HTMLDivElement>) {
@@ -109,7 +154,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
       try {
         const { data, error } = await supabase
           .from('conversations')
-          .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url, conversation_labels(labels(id, name, color))')
+          .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url, archived_at, conversation_labels(labels(id, name, color))')
           .eq('inbox_id', inbox.inboxId)
           .order('last_message_at', { ascending: false })
           .limit(600);
@@ -148,8 +193,11 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
   }, [inbox.inboxId, supabase]);
 
   const Icon = iconForKind(inbox.kind);
+  const arquivadasCount = (convs ?? []).filter(c => c.archived_at).length;
   const filtered = (convs ?? []).filter(c => {
-    // Etiqueta primeiro: conversa passa se tem QUALQUER uma das selecionadas
+    // Arquivadas ficam fora da caixa (e só elas aparecem na visão de arquivadas)
+    if (showArchived ? !c.archived_at : !!c.archived_at) return false;
+    // Etiqueta: conversa passa se tem QUALQUER uma das selecionadas
     if (labelFilter.size > 0) {
       const ids = (c.conversation_labels ?? []).map(r => r.labels?.id).filter(Boolean) as string[];
       if (!ids.some(id => labelFilter.has(id))) return false;
@@ -265,6 +313,26 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
           )}
         </div>
 
+        {/* Arquivadas */}
+        {(arquivadasCount > 0 || showArchived) && (
+          <button
+            type="button"
+            onClick={() => setShowArchived(v => !v)}
+            className={cn(
+              'w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors',
+              showArchived
+                ? 'bg-surface-muted text-fg'
+                : 'text-fg-muted hover:text-fg hover:bg-surface-muted/60',
+            )}
+          >
+            {showArchived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
+            <span className="flex-1 text-left">
+              {showArchived ? 'Voltar para a caixa' : 'Arquivadas'}
+            </span>
+            {!showArchived && <span className="num text-fg-subtle">{arquivadasCount}</span>}
+          </button>
+        )}
+
         {/* Etiquetas ativas no filtro */}
         {labelFilter.size > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -290,7 +358,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
         {convs === null ? (
           <ListSkeleton />
         ) : filtered.length === 0 ? (
-          <EmptyState query={query} filtering={labelFilter.size > 0} />
+          <EmptyState query={query} filtering={labelFilter.size > 0} archived={showArchived} />
         ) : (
           <ul className="flex flex-col gap-1.5 pt-1">
             {filtered.slice(0, visible).map((c) => {
@@ -299,13 +367,33 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
               const displayName = c.customer_name ?? c.customer_phone ?? c.waha_id;
               const labels = (c.conversation_labels ?? [])
                 .map(x => x.labels).filter((l): l is LabelChip => !!l);
+              const sw = swipe?.id === c.id ? swipe.dx : 0;
+              const vaiArquivar = Math.abs(sw) >= ARCHIVE_AT;
               return (
-                <li key={c.id}>
+                <li key={c.id} className="relative rounded-xl overflow-hidden">
+                  {/* Fundo revelado ao arrastar */}
+                  {sw !== 0 && (
+                    <div className={cn(
+                      'absolute inset-0 flex items-center justify-end pr-4 rounded-xl transition-colors',
+                      vaiArquivar ? 'bg-amber-500' : 'bg-amber-500/40',
+                    )}>
+                      <span className="flex items-center gap-1.5 text-white text-[12px] font-medium">
+                        {c.archived_at ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                        {c.archived_at ? 'Restaurar' : 'Arquivar'}
+                      </span>
+                    </div>
+                  )}
                   <button
                     type="button"
-                    onClick={() => onSelect(c.id)}
+                    onClick={() => { if (!swipe) onSelect(c.id); }}
+                    onPointerDown={(e) => onSwipeStart(e, c.id)}
+                    onPointerMove={onSwipeMove}
+                    onPointerUp={onSwipeEnd}
+                    onPointerCancel={onSwipeEnd}
+                    style={sw !== 0 ? { transform: `translateX(${sw}px)` } : undefined}
                     className={cn(
-                      'relative w-full flex items-start gap-3 rounded-xl border px-3 py-3 text-left transition-colors duration-150',
+                      'relative w-full flex items-start gap-3 rounded-xl border px-3 py-3 text-left transition-colors duration-150 touch-pan-y',
+                      sw === 0 && 'transition-transform',
                       active
                         ? 'border-ink-950 dark:border-ink-300 bg-surface shadow-sm'
                         : 'border-border bg-surface hover:border-border-strong hover:bg-surface',
@@ -388,17 +476,21 @@ function ListSkeleton() {
   );
 }
 
-function EmptyState({ query, filtering }: { query: string; filtering?: boolean }) {
-  const msg = filtering
+function EmptyState({ query, filtering, archived }: { query: string; filtering?: boolean; archived?: boolean }) {
+  const msg = archived
+    ? 'Nenhuma conversa arquivada.'
+    : filtering
     ? (query ? 'Nada encontrado com essa busca e etiqueta.' : 'Nenhuma conversa com essa etiqueta.')
     : (query ? 'Nada encontrado.' : 'Sem conversas ainda.');
+  const Icon = archived ? Archive : filtering ? Tag : InboxIcon;
   return (
     <div className="grid place-items-center h-full px-6 py-12 text-center">
       <div className="max-w-xs">
-        {filtering
-          ? <Tag size={24} className="mx-auto text-fg-subtle" strokeWidth={1.5} />
-          : <InboxIcon size={24} className="mx-auto text-fg-subtle" strokeWidth={1.5} />}
+        <Icon size={24} className="mx-auto text-fg-subtle" strokeWidth={1.5} />
         <p className="mt-3 text-[13px] text-fg-muted">{msg}</p>
+        {!archived && !filtering && !query && (
+          <p className="mt-1.5 text-[11.5px] text-fg-subtle">Arraste uma conversa para o lado para arquivar.</p>
+        )}
       </div>
     </div>
   );
