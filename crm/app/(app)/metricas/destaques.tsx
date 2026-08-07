@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Card } from '@/components/ui/card';
-import { Trophy, AlertTriangle, ShieldQuestion, Star } from 'lucide-react';
+import { Trophy, AlertTriangle, ShieldQuestion, Star, Globe } from 'lucide-react';
 import type { Period } from '@/lib/period';
 import { cachedMetric } from '@/lib/metrics-cache';
 import { VerMais } from './ver-mais';
@@ -36,7 +36,7 @@ export async function Destaques({ period }: { period: Period }) {
   const from = period.from.toISOString();
   const to = period.to.toISOString();
 
-  const { best, vendors, perdas, objs, risco, notaCounts } = await cachedMetric(`destaques:${period.key}`, async () => {
+  const { best, vendors, perdas, objs, risco, origem, notaCounts } = await cachedMetric(`destaques:${period.key}`, async () => {
     // Contagem exata por nota (0..10): head+count não transfere linha, então
     // não esbarra no teto de linhas do PostgREST (o mês tem >2k conversas).
     const notaQ = (k: number) => admin.from('conversation_analysis')
@@ -66,11 +66,12 @@ export async function Destaques({ period }: { period: Period }) {
         admin.rpc('analysis_perdas', { p_from: from, p_to: to }),
         admin.rpc('analysis_objecoes', { p_from: from, p_to: to }),
         admin.rpc('analysis_valor_risco', { p_from: from, p_to: to }),
+        admin.rpc('analysis_origem', { p_from: from, p_to: to }),
       ]),
       Promise.all(Array.from({ length: 11 }, (_, k) => notaQ(k))),
     ]);
-    const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }] = base;
-    return { best, vendors, perdas, objs, risco, notaCounts };
+    const [{ data: best }, { data: vendors }, { data: perdas }, { data: objs }, { data: risco }, { data: origem }] = base;
+    return { best, vendors, perdas, objs, risco, origem, notaCounts };
   });
 
   // Histograma de qualidade: soma as contagens exatas em faixas + média real.
@@ -84,6 +85,10 @@ export async function Destaques({ period }: { period: Period }) {
     { label: '0–3',  n: (nc[0] ?? 0) + (nc[1] ?? 0) + (nc[2] ?? 0) + (nc[3] ?? 0) },
   ];
   const maxBand = Math.max(1, ...notaBands.map(b => b.n));
+
+  // Origem dos leads (Google / Meta Ads / demais)
+  const origemRows = (origem ?? []) as { origem: string; leads: number; vendidos: number; conversao: number | null }[];
+  const totalLeads = origemRows.reduce((a, o) => a + Number(o.leads), 0);
 
   const nameById = new Map((vendors ?? []).map((v: { id: number; name: string }) => [v.id, v.name]));
   const top = (best ?? [])[0] as BestRow | undefined;
@@ -198,6 +203,47 @@ export async function Destaques({ period }: { period: Period }) {
           </>
         )}
       </Card>
+
+      {/* ORIGEM DOS LEADS */}
+      {origemRows.length > 0 && (
+        <Card className="p-5">
+          <div className="text-[11px] uppercase tracking-[0.12em] text-fg-subtle flex items-center gap-2">
+            <Globe size={12} /> De onde vêm os leads
+          </div>
+          <div className="mt-3 space-y-2.5">
+            {origemRows.map(o => {
+              const pct = totalLeads > 0 ? Math.round((100 * Number(o.leads)) / totalLeads) : 0;
+              return (
+                <div key={o.origem} className="flex items-center gap-3"
+                  title={`${o.leads} leads · ${o.vendidos} com etiqueta "vendido"`}>
+                  <span className="w-28 shrink-0 text-[12px] text-fg-muted text-right">{o.origem}</span>
+                  <div className="flex-1 h-4 relative">
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-r-[3px] rounded-l-[2px]"
+                      style={{
+                        width: `${Math.max(3, pct)}%`,
+                        backgroundColor: o.origem === 'Google' ? '#4285F4'
+                          : o.origem === 'Meta Ads' ? '#0866FF'
+                          : 'rgb(113 113 122 / 0.7)',
+                      }}
+                    />
+                  </div>
+                  <span className="w-24 shrink-0 text-[11.5px] num text-fg-muted text-right">
+                    {o.leads} · {pct}%
+                  </span>
+                  <span className="w-16 shrink-0 text-[11.5px] num text-fg text-right">
+                    {o.conversao ?? 0}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-[11px] text-fg-subtle leading-relaxed">
+            Última coluna = conversão (etiqueta &quot;vendido&quot;). Google é detectado pela mensagem
+            do anúncio; Meta Ads, pelo clique rastreado.
+          </p>
+        </Card>
+      )}
      </div>
 
       <div className="space-y-6">
