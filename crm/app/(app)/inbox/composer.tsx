@@ -84,9 +84,16 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Mensagens rápidas (respostas prontas do login)
-  const [quickReplies, setQuickReplies] = useState<{ id: string; title: string | null; body: string }[]>([]);
+  interface QuickReply {
+    id: string; title: string | null; body: string | null;
+    media_url: string | null; media_mime: string | null; media_filename: string | null; kind: string | null;
+  }
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [showQR, setShowQR] = useState(false);
   const qrRef = useRef<HTMLDivElement>(null);
+  // Atalho "/" — igual WhatsApp: digitou "/" no começo, abre a lista e filtra
+  const [slashTerm, setSlashTerm] = useState<string | null>(null);
+  const [qrIndex, setQrIndex] = useState(0);
 
   // Arquivo pendente de envio (depois de selecionar, antes de confirmar)
   const [pendingFile, setPendingFile] = useState<{
@@ -118,6 +125,9 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     setSuggestion(null);
     setSugErr(null);
     setSuggesting(false);
+    setShowQR(false);
+    setSlashTerm(null);
+    setQrIndex(0);
     // Para gravação em andamento ao trocar de conversa
     if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null; }
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -262,8 +272,11 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from('quick_replies').select('id, title, body').order('sort').order('created_at');
-      if (!cancelled) setQuickReplies((data ?? []) as { id: string; title: string | null; body: string }[]);
+      const { data } = await supabase
+        .from('quick_replies')
+        .select('id, title, body, media_url, media_mime, media_filename, kind')
+        .order('sort').order('created_at');
+      if (!cancelled) setQuickReplies((data ?? []) as QuickReply[]);
     })();
     return () => { cancelled = true; };
   }, [supabase]);
@@ -278,13 +291,75 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     return () => document.removeEventListener('mousedown', onDown);
   }, [showQR]);
 
-  function insertQuickReply(body: string) {
-    setText(t => (t.trim() ? `${t}${t.endsWith('\n') ? '' : '\n'}${body}` : body));
+  /**
+   * Usa uma mensagem rápida. Só texto → preenche o campo (a vendedora revisa e
+   * envia). Com mídia → envia direto (a mídia já está no Storage; vai por URL,
+   * com o texto como legenda).
+   */
+  async function useQuickReply(qr: QuickReply) {
     setShowQR(false);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    setSlashTerm(null);
+
+    if (!qr.media_url) {
+      const corpo = qr.body ?? '';
+      // Se veio pelo "/", troca o comando; senão concatena
+      setText(t => (slashTerm !== null || !t.trim() ? corpo : `${t}${t.endsWith('\n') ? '' : '\n'}${corpo}`));
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
+
+    setSending(true);
+    setError(null);
+    try {
+      await callSendMessage({
+        kind:           (qr.kind ?? 'document') as MsgKind,
+        body:           qr.body ?? undefined,
+        media_url:      qr.media_url,
+        media_mime:     qr.media_mime ?? undefined,
+        media_filename: qr.media_filename ?? undefined,
+      });
+      setText('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Lista filtrada pelo termo digitado após a "/"
+  const qrFiltered = slashTerm === null
+    ? quickReplies
+    : quickReplies.filter(q => {
+        const t = slashTerm.toLowerCase();
+        return !t || (q.title ?? '').toLowerCase().includes(t) || (q.body ?? '').toLowerCase().includes(t);
+      });
+
+  /** Detecta o comando "/" no início do campo (igual WhatsApp). */
+  function onTextChange(v: string) {
+    setText(v);
+    if (v.startsWith('/') && !pendingFile) {
+      setSlashTerm(v.slice(1));
+      setShowQR(true);
+      setQrIndex(0);
+    } else if (slashTerm !== null) {
+      setSlashTerm(null);
+      setShowQR(false);
+    }
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Navegação na lista de mensagens rápidas aberta pelo "/"
+    if (slashTerm !== null && showQR && qrFiltered.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setQrIndex(i => (i + 1) % qrFiltered.length); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setQrIndex(i => (i - 1 + qrFiltered.length) % qrFiltered.length); return; }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        useQuickReply(qrFiltered[qrIndex]);
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); setSlashTerm(null); setShowQR(false); return; }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (pendingFile) {
@@ -602,24 +677,51 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
               <MessageSquareText size={18} strokeWidth={1.75} />
             </button>
             {showQR && (
-              <div className="absolute bottom-full left-0 mb-2 z-30 w-72 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface shadow-lg animate-fade-in">
-                <div className="px-3 py-2 hairline-b text-[10px] uppercase tracking-[0.14em] text-fg-subtle sticky top-0 bg-surface">
-                  Mensagens rápidas
+              <div className="absolute bottom-full left-0 mb-2 z-30 w-80 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface shadow-lg animate-fade-in">
+                <div className="px-3 py-2 hairline-b flex items-center justify-between sticky top-0 bg-surface">
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-fg-subtle">Mensagens rápidas</span>
+                  {slashTerm !== null && (
+                    <span className="text-[10px] text-fg-subtle">↑↓ e Enter</span>
+                  )}
                 </div>
-                <ul className="py-1">
-                  {quickReplies.map(qr => (
-                    <li key={qr.id}>
-                      <button
-                        type="button"
-                        onClick={() => insertQuickReply(qr.body)}
-                        className="w-full text-left px-3 py-2 hover:bg-surface-muted transition-colors"
-                      >
-                        {qr.title && <div className="text-[12px] font-semibold truncate">{qr.title}</div>}
-                        <div className="text-[12.5px] text-fg-muted line-clamp-2 leading-snug">{qr.body}</div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                {qrFiltered.length === 0 ? (
+                  <div className="px-3 py-4 text-[12.5px] text-fg-muted text-center">Nenhuma encontrada.</div>
+                ) : (
+                  <ul className="py-1">
+                    {qrFiltered.map((qr, i) => (
+                      <li key={qr.id}>
+                        <button
+                          type="button"
+                          onClick={() => useQuickReply(qr)}
+                          onMouseEnter={() => setQrIndex(i)}
+                          className={cn(
+                            'w-full text-left px-3 py-2 transition-colors flex items-start gap-2.5',
+                            slashTerm !== null && i === qrIndex ? 'bg-surface-muted' : 'hover:bg-surface-muted',
+                          )}
+                        >
+                          {qr.media_url && (
+                            qr.kind === 'image'
+                              // eslint-disable-next-line @next/next/no-img-element
+                              ? <img src={qr.media_url} alt="" className="w-9 h-9 rounded-md object-cover shrink-0 border border-border" />
+                              : <span className="w-9 h-9 rounded-md border border-border bg-surface-2 grid place-items-center text-fg-muted shrink-0">
+                                  {(() => { const I = kindIcon((qr.kind ?? 'document') as MsgKind); return <I size={15} />; })()}
+                                </span>
+                          )}
+                          <span className="min-w-0 flex-1">
+                            {qr.title && <span className="block text-[12px] font-semibold truncate">{qr.title}</span>}
+                            {qr.body && <span className="block text-[12.5px] text-fg-muted line-clamp-2 leading-snug">{qr.body}</span>}
+                            {qr.media_url && !qr.body && (
+                              <span className="block text-[12px] text-fg-subtle truncate">{qr.media_filename ?? 'anexo'}</span>
+                            )}
+                            {qr.media_url && (
+                              <span className="block text-[10px] text-fg-subtle mt-0.5">envia direto</span>
+                            )}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
           </div>
@@ -629,13 +731,15 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => onTextChange(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={
               pendingFile
                 ? 'Legenda (opcional)…'
                 : recording
                 ? 'Gravando áudio…'
+                : quickReplies.length > 0
+                ? 'Mensagem… ("/" abre as mensagens rápidas)'
                 : 'Mensagem… (Enter envia, Shift+Enter quebra linha)'
             }
             rows={1}

@@ -17,7 +17,7 @@ export default async function MensagensPage() {
   const [{ data: vendors }, { data: qrs }] = await Promise.all([
     vendorsQuery.order('name'),
     admin.from('quick_replies')
-      .select('id, title, body')
+      .select('id, title, body, media_url, media_filename, kind')
       .eq('owner_user_id', user.id)
       .order('sort').order('created_at'),
   ]);
@@ -72,7 +72,10 @@ export default async function MensagensPage() {
           <p className="text-[13px] text-fg-muted mb-4 max-w-xl leading-relaxed">
             Respostas prontas que aparecem no botão de atalho do inbox, pra você inserir com um clique.
           </p>
-          <QuickReplyManager initial={(qrs ?? []).map(q => ({ id: q.id, title: q.title, body: q.body }))} />
+          <QuickReplyManager initial={(qrs ?? []).map(q => ({
+            id: q.id, title: q.title, body: q.body,
+            media_url: q.media_url, media_filename: q.media_filename, kind: q.kind,
+          }))} />
         </section>
       </div>
     </div>
