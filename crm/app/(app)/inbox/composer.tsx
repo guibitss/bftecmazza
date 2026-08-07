@@ -95,6 +95,14 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
   const [slashTerm, setSlashTerm] = useState<string | null>(null);
   const [qrIndex, setQrIndex] = useState(0);
 
+  // Em tela de toque (iPad/celular) o "return" do teclado deve QUEBRAR LINHA,
+  // não enviar — é o que a vendedora espera, igual no WhatsApp. No desktop
+  // Enter continua enviando. Detectado no cliente pra não quebrar o SSR.
+  const [isTouch, setIsTouch] = useState(false);
+  useEffect(() => {
+    setIsTouch(window.matchMedia?.('(pointer: coarse)').matches ?? false);
+  }, []);
+
   // Arquivo pendente de envio (depois de selecionar, antes de confirmar)
   const [pendingFile, setPendingFile] = useState<{
     file: File; kind: MsgKind; preview?: string;
@@ -359,6 +367,9 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
       }
       if (e.key === 'Escape') { e.preventDefault(); setSlashTerm(null); setShowQR(false); return; }
     }
+
+    // Touch (iPad/celular): Enter quebra linha; envio é pelo botão.
+    if (e.key === 'Enter' && isTouch) return;
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -738,6 +749,8 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
                 ? 'Legenda (opcional)…'
                 : recording
                 ? 'Gravando áudio…'
+                : isTouch
+                ? 'Mensagem…'
                 : quickReplies.length > 0
                 ? 'Mensagem… ("/" abre as mensagens rápidas)'
                 : 'Mensagem… (Enter envia, Shift+Enter quebra linha)'
