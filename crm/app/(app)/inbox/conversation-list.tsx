@@ -43,6 +43,12 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
   const [query, setQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Renderização incremental: o iPad travava com a lista inteira no DOM.
+  // Mantemos todas as conversas em memória (a busca varre tudo) mas só
+  // montamos um pedaço, crescendo conforme rola.
+  const PAGE = 40;
+  const [visible, setVisible] = useState(PAGE);
+
   // Filtro por etiqueta (ids selecionados) — conversa passa se tem QUALQUER uma
   const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set());
   const [showLabels, setShowLabels] = useState(false);
@@ -76,6 +82,17 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
   // Some com etiquetas que não existem mais na caixa (ex: ao trocar de inbox)
   useEffect(() => { setLabelFilter(new Set()); setShowLabels(false); }, [inbox.inboxId]);
 
+  // Volta ao topo da renderização quando muda o que está sendo listado
+  useEffect(() => { setVisible(PAGE); }, [inbox.inboxId, query, labelFilter]);
+
+  // Cresce a lista ao chegar perto do fim (para quando já mostrou tudo)
+  function onScroll(e: React.UIEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) {
+      setVisible(v => (v >= filtered.length ? v : v + PAGE));
+    }
+  }
+
   function toggleLabel(id: string) {
     setLabelFilter(prev => {
       const s = new Set(prev);
@@ -95,7 +112,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
           .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url, conversation_labels(labels(id, name, color))')
           .eq('inbox_id', inbox.inboxId)
           .order('last_message_at', { ascending: false })
-          .limit(1500);
+          .limit(600);
         if (!cancelled) setConvs((data ?? []) as ConvRow[]);
       } catch {
         if (!cancelled) setConvs([]);
@@ -269,14 +286,14 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
       </div>
 
       {/* Lista — cards com border + espaçamento */}
-      <div ref={containerRef} className="flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
+      <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
         {convs === null ? (
           <ListSkeleton />
         ) : filtered.length === 0 ? (
           <EmptyState query={query} filtering={labelFilter.size > 0} />
         ) : (
           <ul className="flex flex-col gap-1.5 pt-1">
-            {filtered.map((c) => {
+            {filtered.slice(0, visible).map((c) => {
               const active = c.id === selectedConvId;
               const hasUnread = c.unread_count > 0;
               const displayName = c.customer_name ?? c.customer_phone ?? c.waha_id;
@@ -288,7 +305,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
                     type="button"
                     onClick={() => onSelect(c.id)}
                     className={cn(
-                      'relative w-full flex items-start gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150',
+                      'relative w-full flex items-start gap-3 rounded-xl border px-3 py-3 text-left transition-colors duration-150',
                       active
                         ? 'border-ink-950 dark:border-ink-300 bg-surface shadow-sm'
                         : 'border-border bg-surface hover:border-border-strong hover:bg-surface',
