@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { isDemo } from '@/lib/supabase/schema';
 import type { InboxAccess } from '@/lib/auth';
 import { timeRelative, initials } from '@/lib/format';
-import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon, Tag, X, Check, Archive, ArchiveRestore } from 'lucide-react';
+import { Search, Sparkles, Headset, User as UserIcon, Inbox as InboxIcon, Tag, X, Check, Archive, ArchiveRestore, Pin, PinOff } from 'lucide-react';
 import { Avatar } from '@/components/avatar';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +23,7 @@ export interface ConvRow {
   status: string;
   avatar_url: string | null;
   archived_at?: string | null;
+  pinned_at?: string | null;
   conversation_labels?: { labels: LabelChip | null }[];
 }
 
@@ -54,7 +55,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
   const [showArchived, setShowArchived] = useState(false);
   const [swipe, setSwipe] = useState<{ id: number; dx: number } | null>(null);
   const swipeRef = useRef<{ id: number; x0: number; y0: number; locked: boolean } | null>(null);
-  const ARCHIVE_AT = 96; // arrastar além disso arquiva
+  const ACTION_AT = 96; // arrastar além disso dispara a ação
 
   async function toggleArchive(id: number, arquivar: boolean) {
     setConvs(prev => prev?.map(c => c.id === id
@@ -64,6 +65,12 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
       .from('conversations')
       .update({ archived_at: arquivar ? new Date().toISOString() : null })
       .eq('id', id);
+  }
+
+  async function togglePin(id: number, fixar: boolean) {
+    const agora = fixar ? new Date().toISOString() : null;
+    setConvs(prev => prev?.map(c => (c.id === id ? { ...c, pinned_at: agora } : c)) ?? prev);
+    await supabase.from('conversations').update({ pinned_at: agora }).eq('id', id);
   }
 
   function onSwipeStart(e: React.PointerEvent, id: number) {
@@ -80,16 +87,18 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
       if (Math.abs(dx) < 12) return;
       s.locked = true;
     }
-    setSwipe({ id: s.id, dx: Math.max(-180, Math.min(0, dx)) });
+    // esquerda arquiva, direita fixa
+    setSwipe({ id: s.id, dx: Math.max(-180, Math.min(180, dx)) });
   }
   function onSwipeEnd() {
     const s = swipeRef.current;
     swipeRef.current = null;
     if (!s?.locked) { setSwipe(null); return; }
     const dx = swipe?.dx ?? 0;
-    if (Math.abs(dx) >= ARCHIVE_AT) {
+    if (Math.abs(dx) >= ACTION_AT) {
       const alvo = (convs ?? []).find(c => c.id === s.id);
-      toggleArchive(s.id, !alvo?.archived_at);
+      if (dx < 0) toggleArchive(s.id, !alvo?.archived_at);
+      else        togglePin(s.id, !alvo?.pinned_at);
     }
     setSwipe(null);
   }
@@ -154,7 +163,7 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
       try {
         const { data, error } = await supabase
           .from('conversations')
-          .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url, archived_at, conversation_labels(labels(id, name, color))')
+          .select('id, inbox_id, customer_name, customer_phone, waha_id, last_message_at, last_message_preview, unread_count, status, avatar_url, archived_at, pinned_at, conversation_labels(labels(id, name, color))')
           .eq('inbox_id', inbox.inboxId)
           .order('last_message_at', { ascending: false })
           .limit(600);
@@ -221,7 +230,13 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
     if (wahaNum.includes(searchNum)) return true;
 
     return false;
-  });
+  })
+    // Fixadas sempre no topo (mais recente primeiro dentro de cada grupo)
+    .sort((a, b) => {
+      if (!!a.pinned_at !== !!b.pinned_at) return a.pinned_at ? -1 : 1;
+      if (a.pinned_at && b.pinned_at) return b.pinned_at.localeCompare(a.pinned_at);
+      return 0;
+    });
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-surface-2/40">
@@ -368,18 +383,23 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
               const labels = (c.conversation_labels ?? [])
                 .map(x => x.labels).filter((l): l is LabelChip => !!l);
               const sw = swipe?.id === c.id ? swipe.dx : 0;
-              const vaiArquivar = Math.abs(sw) >= ARCHIVE_AT;
+              const vaiAgir = Math.abs(sw) >= ACTION_AT;
+              const paraDireita = sw > 0;
               return (
                 <li key={c.id} className="relative rounded-xl overflow-hidden">
-                  {/* Fundo revelado ao arrastar */}
+                  {/* Fundo revelado ao arrastar: ← arquivar · → fixar */}
                   {sw !== 0 && (
                     <div className={cn(
-                      'absolute inset-0 flex items-center justify-end pr-4 rounded-xl transition-colors',
-                      vaiArquivar ? 'bg-amber-500' : 'bg-amber-500/40',
+                      'absolute inset-0 flex items-center rounded-xl transition-colors',
+                      paraDireita ? 'justify-start pl-4' : 'justify-end pr-4',
+                      paraDireita
+                        ? (vaiAgir ? 'bg-sky-600' : 'bg-sky-600/40')
+                        : (vaiAgir ? 'bg-amber-500' : 'bg-amber-500/40'),
                     )}>
                       <span className="flex items-center gap-1.5 text-white text-[12px] font-medium">
-                        {c.archived_at ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-                        {c.archived_at ? 'Restaurar' : 'Arquivar'}
+                        {paraDireita
+                          ? <>{c.pinned_at ? <PinOff size={15} /> : <Pin size={15} />}{c.pinned_at ? 'Desafixar' : 'Fixar'}</>
+                          : <>{c.archived_at ? <ArchiveRestore size={15} /> : <Archive size={15} />}{c.archived_at ? 'Restaurar' : 'Arquivar'}</>}
                       </span>
                     </div>
                   )}
@@ -410,7 +430,8 @@ export function ConversationList({ inbox, selectedConvId, onSelect }: Props) {
                         )}>
                           {displayName}
                         </span>
-                        <span className="text-[10.5px] text-fg-subtle shrink-0 num">
+                        <span className="text-[10.5px] text-fg-subtle shrink-0 num flex items-center gap-1">
+                          {c.pinned_at && <Pin size={11} className="text-fg-muted" strokeWidth={2} />}
                           {timeRelative(c.last_message_at)}
                         </span>
                       </div>
@@ -489,7 +510,7 @@ function EmptyState({ query, filtering, archived }: { query: string; filtering?:
         <Icon size={24} className="mx-auto text-fg-subtle" strokeWidth={1.5} />
         <p className="mt-3 text-[13px] text-fg-muted">{msg}</p>
         {!archived && !filtering && !query && (
-          <p className="mt-1.5 text-[11.5px] text-fg-subtle">Arraste uma conversa para o lado para arquivar.</p>
+          <p className="mt-1.5 text-[11.5px] text-fg-subtle">Arraste uma conversa: ← arquivar · → fixar.</p>
         )}
       </div>
     </div>
