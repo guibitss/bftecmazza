@@ -50,7 +50,7 @@ export function AddForm() {
       <div className="flex items-center gap-3">
         <button
           onClick={submit} disabled={pending}
-          className="h-9 px-4 rounded-lg bg-fg text-bg text-[13px] font-medium flex items-center gap-1.5 transition-opacity disabled:opacity-50 hover:opacity-80"
+          className="h-9 px-4 rounded-lg bg-ink-950 dark:bg-white text-white dark:text-ink-950 text-[13px] font-medium flex items-center gap-1.5 transition-opacity disabled:opacity-50 hover:opacity-80"
         >
           <UserPlus size={15} /> Adicionar à equipe
         </button>

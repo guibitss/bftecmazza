@@ -84,9 +84,17 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Mensagens rápidas (respostas prontas do login)
+  interface QuickMediaItem { url: string; mime?: string | null; filename?: string | null; kind?: string | null }
   interface QuickReply {
     id: string; title: string | null; body: string | null;
     media_url: string | null; media_mime: string | null; media_filename: string | null; kind: string | null;
+    media_items: QuickMediaItem[] | null;
+  }
+  /** Anexos: usa a lista nova; cai no anexo único do formato antigo. */
+  function anexosDe(qr: QuickReply): QuickMediaItem[] {
+    if (qr.media_items?.length) return qr.media_items;
+    if (qr.media_url) return [{ url: qr.media_url, mime: qr.media_mime, filename: qr.media_filename, kind: qr.kind }];
+    return [];
   }
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [showQR, setShowQR] = useState(false);
@@ -275,7 +283,7 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     (async () => {
       const { data } = await supabase
         .from('quick_replies')
-        .select('id, title, body, media_url, media_mime, media_filename, kind')
+        .select('id, title, body, media_url, media_mime, media_filename, kind, media_items')
         .order('sort').order('created_at');
       if (!cancelled) setQuickReplies((data ?? []) as QuickReply[]);
     })();
@@ -301,7 +309,8 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     setShowQR(false);
     setSlashTerm(null);
 
-    if (!qr.media_url) {
+    const anexos = anexosDe(qr);
+    if (anexos.length === 0) {
       const corpo = qr.body ?? '';
       // Se veio pelo "/", troca o comando; senão concatena
       setText(t => (slashTerm !== null || !t.trim() ? corpo : `${t}${t.endsWith('\n') ? '' : '\n'}${corpo}`));
@@ -312,13 +321,17 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
     setSending(true);
     setError(null);
     try {
-      await callSendMessage({
-        kind:           (qr.kind ?? 'document') as MsgKind,
-        body:           qr.body ?? undefined,
-        media_url:      qr.media_url,
-        media_mime:     qr.media_mime ?? undefined,
-        media_filename: qr.media_filename ?? undefined,
-      });
+      // Envia na ordem; o texto vai como legenda do primeiro
+      for (let i = 0; i < anexos.length; i++) {
+        const m = anexos[i];
+        await callSendMessage({
+          kind:           (m.kind ?? 'document') as MsgKind,
+          body:           i === 0 ? (qr.body ?? undefined) : undefined,
+          media_url:      m.url,
+          media_mime:     m.mime ?? undefined,
+          media_filename: m.filename ?? undefined,
+        });
+      }
       setText('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -691,7 +704,10 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
                   <div className="px-3 py-4 text-[12.5px] text-fg-muted text-center">Nenhuma encontrada.</div>
                 ) : (
                   <ul className="py-1">
-                    {qrFiltered.map((qr, i) => (
+                    {qrFiltered.map((qr, i) => {
+                      const anexos = anexosDe(qr);
+                      const capa = anexos[0];
+                      return (
                       <li key={qr.id}>
                         <button
                           type="button"
@@ -702,27 +718,39 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
                             slashTerm !== null && i === qrIndex ? 'bg-surface-muted' : 'hover:bg-surface-muted',
                           )}
                         >
-                          {qr.media_url && (
-                            qr.kind === 'image'
-                              // eslint-disable-next-line @next/next/no-img-element
-                              ? <img src={qr.media_url} alt="" className="w-9 h-9 rounded-md object-cover shrink-0 border border-border" />
-                              : <span className="w-9 h-9 rounded-md border border-border bg-surface-2 grid place-items-center text-fg-muted shrink-0">
-                                  {(() => { const I = kindIcon((qr.kind ?? 'document') as MsgKind); return <I size={15} />; })()}
+                          {capa && (
+                            <span className="relative shrink-0">
+                              {capa.kind === 'image'
+                                // eslint-disable-next-line @next/next/no-img-element
+                                ? <img src={capa.url} alt="" className="w-9 h-9 rounded-md object-cover border border-border" />
+                                : <span className="w-9 h-9 rounded-md border border-border bg-surface-2 grid place-items-center text-fg-muted">
+                                    {(() => { const I = kindIcon((capa.kind ?? 'document') as MsgKind); return <I size={15} />; })()}
+                                  </span>}
+                              {anexos.length > 1 && (
+                                <span className="absolute -bottom-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-ink-950 dark:bg-white text-white dark:text-ink-950 text-[9px] font-semibold grid place-items-center num">
+                                  {anexos.length}
                                 </span>
+                              )}
+                            </span>
                           )}
                           <span className="min-w-0 flex-1">
                             {qr.title && <span className="block text-[12px] font-semibold truncate">{qr.title}</span>}
                             {qr.body && <span className="block text-[12.5px] text-fg-muted line-clamp-2 leading-snug">{qr.body}</span>}
-                            {qr.media_url && !qr.body && (
-                              <span className="block text-[12px] text-fg-subtle truncate">{qr.media_filename ?? 'anexo'}</span>
+                            {anexos.length > 0 && !qr.body && (
+                              <span className="block text-[12px] text-fg-subtle truncate">
+                                {anexos.length === 1 ? (capa?.filename ?? 'anexo') : `${anexos.length} anexos`}
+                              </span>
                             )}
-                            {qr.media_url && (
-                              <span className="block text-[10px] text-fg-subtle mt-0.5">envia direto</span>
+                            {anexos.length > 0 && (
+                              <span className="block text-[10px] text-fg-subtle mt-0.5">
+                                envia direto{anexos.length > 1 ? ` (${anexos.length} arquivos)` : ''}
+                              </span>
                             )}
                           </span>
                         </button>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 )}
               </div>

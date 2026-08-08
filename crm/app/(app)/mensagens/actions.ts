@@ -25,18 +25,24 @@ export interface QuickMedia {
   url: string; mime: string | null; filename: string | null; kind: string;
 }
 
-export async function addQuickReply(title: string, body: string, media?: QuickMedia | null) {
+export async function addQuickReply(title: string, body: string, media?: QuickMedia[] | QuickMedia | null) {
   const user = await getCurrentUser();
-  if (!body.trim() && !media) return { ok: false, error: 'Escreva a mensagem ou anexe um arquivo.' };
+  const itens = Array.isArray(media) ? media : media ? [media] : [];
+  if (!body.trim() && itens.length === 0) {
+    return { ok: false, error: 'Escreva a mensagem ou anexe um arquivo.' };
+  }
+  const primeiro = itens[0];
   const admin = createAdminClient();
   const { error } = await admin.from('quick_replies').insert({
     owner_user_id:  user.id,
     title:          title.trim() || null,
     body:           body.trim() || null,
-    media_url:      media?.url ?? null,
-    media_mime:     media?.mime ?? null,
-    media_filename: media?.filename ?? null,
-    kind:           media?.kind ?? 'text',
+    media_items:    itens,
+    // Espelha o primeiro anexo nas colunas antigas (compatibilidade)
+    media_url:      primeiro?.url ?? null,
+    media_mime:     primeiro?.mime ?? null,
+    media_filename: primeiro?.filename ?? null,
+    kind:           primeiro?.kind ?? 'text',
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath('/mensagens');
@@ -49,9 +55,10 @@ export async function updateQuickReply(id: string, title: string, body: string) 
   // Sem body só é válido se já houver mídia salva
   if (!body.trim()) {
     const { data: atual } = await admin
-      .from('quick_replies').select('media_url')
+      .from('quick_replies').select('media_url, media_items')
       .eq('id', id).eq('owner_user_id', user.id).maybeSingle();
-    if (!atual?.media_url) return { ok: false, error: 'Escreva a mensagem.' };
+    const temMidia = !!atual?.media_url || ((atual?.media_items as unknown[] | null)?.length ?? 0) > 0;
+    if (!temMidia) return { ok: false, error: 'Escreva a mensagem.' };
   }
   const { error } = await admin
     .from('quick_replies')

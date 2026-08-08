@@ -66,7 +66,7 @@ export function LunchBreakForm({ vendorId, lunchStart, lunchEnd }: Props) {
       <button
         onClick={handleSave}
         disabled={isPending}
-        className="h-8 px-3 rounded-lg bg-fg text-bg text-[12px] font-medium transition-opacity disabled:opacity-50 hover:opacity-80"
+        className="h-8 px-3 rounded-lg bg-ink-950 dark:bg-white text-white dark:text-ink-950 text-[12px] font-medium transition-opacity disabled:opacity-50 hover:opacity-80"
       >
         Salvar
       </button>

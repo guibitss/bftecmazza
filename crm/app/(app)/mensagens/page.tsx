@@ -17,7 +17,7 @@ export default async function MensagensPage() {
   const [{ data: vendors }, { data: qrs }] = await Promise.all([
     vendorsQuery.order('name'),
     admin.from('quick_replies')
-      .select('id, title, body, media_url, media_filename, kind')
+      .select('id, title, body, media_url, media_filename, kind, media_items')
       .eq('owner_user_id', user.id)
       .order('sort').order('created_at'),
   ]);
@@ -75,6 +75,7 @@ export default async function MensagensPage() {
           <QuickReplyManager initial={(qrs ?? []).map(q => ({
             id: q.id, title: q.title, body: q.body,
             media_url: q.media_url, media_filename: q.media_filename, kind: q.kind,
+            media_items: q.media_items,
           }))} />
         </section>
       </div>
