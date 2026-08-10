@@ -53,7 +53,13 @@ Quando o vendedor mandar um PRINT de conversa (imagem) ou perguntar "o que eu de
 
 Princípios de venda que você defende: qualificar antes do preço; sempre oferecer parcelamento junto do valor; nunca dar um "não" sem alternativa; fazer pergunta de fechamento; e follow-up de quem não respondeu. Seja específico ao contexto da mensagem.
 
-O ESCOPO DE ACESSO de quem está falando vem descrito no fim deste prompt — siga-o à risca. Só aplique restrição de dados quando o escopo mandar; se o escopo disser que a pessoa tem acesso total, responda com naturalidade, sem hedging e sem dizer que "não pode compartilhar".`;
+O ESCOPO DE ACESSO de quem está falando vem descrito no fim deste prompt — siga-o à risca. Só aplique restrição de dados quando o escopo mandar; se o escopo disser que a pessoa tem acesso total, responda com naturalidade, sem hedging e sem dizer que "não pode compartilhar".
+
+NUNCA INVENTE DADOS (regra absoluta). Os únicos números e nomes de vendedoras que você tem são os do bloco MÉTRICAS. É proibido:
+- citar vendedora que não esteja nesse bloco (não invente "Ana", "Bruna", nomes plausíveis);
+- inventar valor para métrica que não está lá (tempo de resposta, ticket médio, % de conversão que não foi dado);
+- estimar, arredondar "de cabeça" ou completar lacuna com número inventado.
+Se o dado não estiver no bloco, diga com naturalidade que não tem esse número e ofereça o que você tem. Um gerente decide com base no que você fala — número errado é pior que nenhum número.`;
 
 interface Caller {
   userId: string;
@@ -158,18 +164,31 @@ async function metricsContext(
   if (allowed.size === 0) return '';
   const from = new Date(Date.now() - 30 * 86400_000).toISOString();
   const to = new Date().toISOString();
-  const { data } = await db.rpc('vendor_quality_metrics', { p_from: from, p_to: to });
+  const { data, error } = await db.rpc('vendor_quality_metrics', { p_from: from, p_to: to });
+  // A RPC é pesada e pode falhar/expirar. Se isso acontecer, é obrigatório
+  // dizer ao modelo que NÃO há dados — senão ele inventa números.
+  if (error) {
+    console.error('metricsContext:', error);
+    return '\n\nMÉTRICAS: indisponíveis nesta consulta (falha ao carregar). ' +
+      'Diga que não conseguiu carregar os números agora e NÃO cite nenhum valor.';
+  }
   let rows = ((data ?? []) as Array<Record<string, unknown>>)
     .filter(r => allowed.has(r.vendor_id as number));
   if (focus) rows = rows.filter(r => r.vendor_id === focus);
-  if (rows.length === 0) return '';
+  if (rows.length === 0) {
+    return '\n\nMÉTRICAS: nenhuma conversa analisada no período para quem você pode ver. ' +
+      'Diga isso com franqueza e NÃO invente nomes nem números.';
+  }
   const linhas = rows.map(r =>
-    `- ${r.vendor_name}: fechamento/conv ${r.fechamento_por_conv ?? '—'}, ` +
+    `- ${r.vendor_name}: ${r.convs_analisadas} conversas analisadas, nota média ${r.nota_media ?? '—'}, ` +
+    `fechamento/conv ${r.fechamento_por_conv ?? '—'}, ` +
     `follow-up ${r.followup_feitos}/${r.followup_oportunidades}, vendidos ${r.vendidos}, ` +
     `esfriados ${r.esfriados ?? '—'}, qualificação ${r.qualificacao_pct ?? '—'}%, ` +
     `parc. proativo ${r.parcelamento_proativo_pct ?? '—'}%, áudio ${r.audio_pct ?? '—'}%`,
   ).join('\n');
-  return `\n\nMÉTRICAS DOS ÚLTIMOS 30 DIAS (use para embasar):\n${linhas}`;
+  return `\n\nMÉTRICAS DOS ÚLTIMOS 30 DIAS (use para embasar):\n${linhas}\n` +
+    `Estes são TODOS os dados que você tem. Qualquer outro número (tempo de resposta, ` +
+    `ticket, ranking por período) você NÃO possui.`;
 }
 
 Deno.serve(async (req) => {
