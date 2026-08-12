@@ -371,12 +371,36 @@ async function upsertConversation(opts: {
   session: string;
   adReferral?: AdReferral | null;
 }): Promise<number> {
-  const { data: existing } = await supabase
+  let { data: existing } = await supabase
     .from('conversations')
     .select('id, avatar_url, ad_ctwa_clid, ad_source_id')
     .eq('inbox_id', opts.inboxId)
     .eq('waha_id', opts.wahaId)
     .maybeSingle();
+
+  // O WhatsApp passou a identificar o contato por @lid (id interno), diferente
+  // do @c.us/@s.whatsapp.net antigo. Só olhar o waha_id fazia a MESMA pessoa
+  // virar duas conversas — histórico partido e lead contado em dobro. Se não
+  // achou pelo id, procura pelo telefone (normalizado, tolerando o 9º dígito).
+  if (!existing?.id && opts.customerPhone) {
+    const { data: porTelefone } = await supabase
+      .from('conversations')
+      .select('id, avatar_url, ad_ctwa_clid, ad_source_id, waha_id')
+      .eq('inbox_id', opts.inboxId)
+      .eq('customer_phone', opts.customerPhone)
+      .order('last_message_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (porTelefone?.id) {
+      existing = porTelefone;
+      // Passa a valer o id novo (@lid), pra próxima mensagem casar direto
+      if (porTelefone.waha_id !== opts.wahaId) {
+        await supabase.from('conversations')
+          .update({ waha_id: opts.wahaId })
+          .eq('id', porTelefone.id);
+      }
+    }
+  }
 
   if (existing?.id) {
     // Atualiza nome/telefone caso ainda estejam vazios (ex: chegaram em payload posterior)
