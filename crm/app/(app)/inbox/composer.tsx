@@ -9,6 +9,7 @@ import {
 import type { InboxAccess } from '@/lib/auth';
 import { createClient } from '@/lib/supabase/client';
 import { dbSchema } from '@/lib/supabase/schema';
+import { webmParaOgg } from '@/lib/webm-to-ogg';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -423,16 +424,27 @@ export function Composer({ convId, inbox, sendableInboxes, canSend }: Props) {
       return;
     }
 
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       const chunks = recChunksRef.current;
       recChunksRef.current = [];
       recorderRef.current = null;
       setRecording(false);
       setRecSeconds(0);
       if (chunks.length === 0) return;
+
       const mime = chunks[0].type || 'audio/webm';
-      const blob = new Blob(chunks, { type: mime });
-      const ext  = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'mp4' : 'webm';
+      let blob = new Blob(chunks, { type: mime });
+      let ext = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'mp4' : 'webm';
+
+      // O WhatsApp só entrega nota de voz em Ogg/Opus — WebM fica preso em
+      // "enviado" e nunca chega. O Chrome só grava WebM, então trocamos o
+      // recipiente aqui (o áudio já é Opus nos dois; não há recodificação).
+      if (ext === 'webm') {
+        const ogg = await webmParaOgg(blob);
+        if (ogg) { blob = ogg; ext = 'ogg'; }
+        else console.warn('Não consegui converter o áudio para Ogg; enviando como está.');
+      }
+
       sendMediaRef.current(blob, `audio-${Date.now()}.${ext}`, 'audio');
     };
     recorder.stop();
